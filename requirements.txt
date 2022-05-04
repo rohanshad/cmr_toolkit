@@ -1,0 +1,11 @@
+h5py==3.1.0
+imageio==2.9.0
+imageio_ffmpeg==0.4.5
+matplotlib==3.3.4
+natsort==8.1.0
+numpy==1.21.2
+pandas==1.2.1
+pyaml_env==1.1.5
+pydicom==2.1.2
+torch==1.8.1
+torchvideotransforms @ git+https://github.com/hassony2/torch_videovision@785a810d1df2ccab6901fb98b38e358433e7b17a
