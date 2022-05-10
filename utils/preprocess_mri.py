@@ -35,7 +35,6 @@ from pyaml_env import BaseConfig, parse_config
 # Read local_config.yaml for local variables 
 cfg = BaseConfig(parse_config('../local_config.yaml'))
 TMP_DIR = cfg.tmp_dir
-BUCKET_NAME = cfg.bucket_name
 
 
 class CMRI_PreProcessor:
@@ -57,7 +56,7 @@ class CMRI_PreProcessor:
 		Returns: array [c, f, w, h] 
 		'''
 		try:
-			df = dcm.dcmread(input_file)
+			df = dcm.dcmread(input_file, force=True)
 
 			# Check if any dicoms have non greyscale 
 			df.PhotometricInterpretation = 'MONOCHROME2'
@@ -226,9 +225,9 @@ class CMRI_PreProcessor:
 		Handles specific nuances of ukbiobank data
 		'''
 		sax_files_list = []
-		for dcm_subfolder in dcm_directory:
+		for dcm_subfolder in os.listdir(dcm_directory):
 			dicom_list = os.listdir(dcm_subfolder)
-			df = dcm.dcmread(os.path.join(dcm_subfolder, dicom_list[0]))
+			df = dcm.dcmread(os.path.join(dcm_subfolder, dicom_list[0]), force=True)
 			
 			if "CINE_segmented_SAX" in df.SeriesDescription and "InlineVF" not in df.SeriesDescription:
 				sax_files_list.append(dcm_subfolder)
@@ -263,9 +262,9 @@ class CMRI_PreProcessor:
 		# Process separated views
 
 		sax_files_list = []
-		for dcm_subfolder in dcm_directory:
+		for dcm_subfolder in glob.glob(os.path.join(dcm_directory, '*')):
 			dicom_list = os.listdir(dcm_subfolder)
-			df = dcm.dcmread(os.path.join(dcm_subfolder, dicom_list[0]))
+			df = dcm.dcmread(os.path.join(dcm_subfolder, dicom_list[0]), force=True)
 
 			# MEDSTAR
 			if self.institution_prefix == 'medstar':
@@ -313,7 +312,7 @@ class CMRI_PreProcessor:
 
 		# OTHER HOSPITALS
 		else:
-			for dcm_subfolder in dcm_directory:
+			for dcm_subfolder in glob.glob(os.path.join(dcm_directory, '*')):
 				if len(glob.glob(os.path.join(dcm_subfolder, '*'))) > 1:
 					collated_array = self.collate_arrays(dcm_subfolder) 
 					
@@ -343,7 +342,8 @@ class CMRI_PreProcessor:
 		dcm_directory = glob.glob(os.path.join(tar_extract_path, '*', '*'))
 
 		# Handles separate pipelines based on data source
-		self.view_disambugator(dcm_directory)
+		print(dcm_directory[0])
+		self.view_disambugator(dcm_directory[0])
 
 		# Clean up after to save space  
 		try:

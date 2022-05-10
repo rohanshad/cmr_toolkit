@@ -11,6 +11,7 @@ import pydicom as dcm
 import time
 import glob
 import pandas as pd 
+import shutil
 
 
 def csv_tarcompress(root_dir, filename, output_dir, csv_reference):
@@ -88,6 +89,28 @@ def simple_tarcompress(root_dir, filename, output_dir):
 	tar.close()
 
 
+def nl_tarcompress(root_dir, filename, output_dir):
+	'''
+	Deals with dicom folders without any subfolder strcuture for seriesdescription
+	'''
+
+	dicom_list = glob.glob(os.path.join(root_dir, filename, '*', '*'))
+	try:
+		for i in dicom_list:	
+				df = dcm.dcmread(i)
+				series_description = df.SeriesDescription  
+
+				# Creates subfolder structure for each view
+				os.makedirs(os.path.join(os.path.split(i)[0], series_description), exist_ok=True)
+				shutil.move(i, os.path.join(os.path.split(i)[0], series_description, os.path.split(i)[1]))
+		
+		# Final compression
+		simple_tarcompress(root_dir, filename, output_dir)
+
+	except:
+			print(f'DICOM corrupted! Skipping...')
+
+
 if __name__ == '__main__':
 	
 
@@ -119,6 +142,7 @@ if __name__ == '__main__':
 
 	start_time = time.time()
 	filenames = os.listdir(root_dir)
+	filenames = [i for i in filenames if i[0] != "."]
 
 	if mode == 'simple':
 		'''
@@ -152,6 +176,13 @@ if __name__ == '__main__':
 			else:
 				csv_tarcompress(root_dir, f, output_dir, csv_reference)
 
+	elif mode == 'nl_tarcompress':
+
+		for f in filenames:
+			if cpus > 1:
+				p.apply_async(nl_tarcompress, [root_dir, f, output_dir])
+			else:
+				nl_tarcompress(root_dir, f, output_dir)	
 
 	p.close()
 	p.join()
