@@ -12,7 +12,13 @@ import time
 import glob
 import pandas as pd 
 import shutil
+import bcolors
 
+from pyaml_env import BaseConfig, parse_config
+
+# Read local_config.yaml for local variables 
+cfg = BaseConfig(parse_config('../local_config.yaml'))
+TMP_DIR = cfg.tmp_dir
 
 def csv_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''
@@ -95,20 +101,28 @@ def nl_tarcompress(root_dir, filename, output_dir):
 	'''
 
 	dicom_list = glob.glob(os.path.join(root_dir, filename, '*', '*'))
-	try:
-		for i in dicom_list:	
-				df = dcm.dcmread(i)
-				series_description = df.SeriesDescription  
+	
+	counter = 0
+	for i in dicom_list:	
+		try:
+			df = dcm.dcmread(i, force=True)
+			series_description = df.SeriesDescription  
 
-				# Creates subfolder structure for each view
-				os.makedirs(os.path.join(os.path.split(i)[0], series_description), exist_ok=True)
-				shutil.move(i, os.path.join(os.path.split(i)[0], series_description, os.path.split(i)[1]))
-		
-		# Final compression
-		simple_tarcompress(root_dir, filename, output_dir)
+			dicom_basename = os.path.split(i)[1]
+			accession_number = os.path.split(os.path.split(i)[0])[1]
 
-	except:
+			os.makedirs(os.path.join(TMP_DIR, filename, accession_number, series_description), exist_ok=True)
+			shutil.copy(i, os.path.join(TMP_DIR, filename, accession_number, series_description, dicom_basename))
+			counter = counter + 1
+		except Exception as ex:
+			print(f'Error code: {ex}')
 			print(f'DICOM corrupted! Skipping...')
+
+	# Final compression
+	simple_tarcompress(TMP_DIR, filename, output_dir)
+	shutil.rmtree(os.path.join(TMP_DIR, filename))
+	print(f'{bcolors.OK}Successfully exported {counter} dicom files to tar{bcolors.END}')
+
 
 
 if __name__ == '__main__':

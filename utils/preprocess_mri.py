@@ -342,7 +342,6 @@ class CMRI_PreProcessor:
 		dcm_directory = glob.glob(os.path.join(tar_extract_path, '*', '*'))
 
 		# Handles separate pipelines based on data source
-		print(dcm_directory[0])
 		self.view_disambugator(dcm_directory[0])
 
 		# Clean up after to save space  
