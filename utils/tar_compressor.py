@@ -10,19 +10,19 @@ import argparse as ap
 import pydicom as dcm
 import time
 import glob
-import pandas as pd 
+import pandas as pd
 import shutil
 import bcolors
 
 from pyaml_env import BaseConfig, parse_config
 
-# Read local_config.yaml for local variables 
-cfg = BaseConfig(parse_config('../local_config.yaml'))
+# Read local_config.yaml for local variables
+cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
 TMP_DIR = cfg.tmp_dir
 
 def csv_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''
-	First reads dcm files and renames the filename to this 
+	First reads dcm files and renames the filename to this
 	Then compresses folders into tarfiles
 	'''
 
@@ -32,11 +32,11 @@ def csv_tarcompress(root_dir, filename, output_dir, csv_reference):
 	try:
 		df = dcm.dcmread(dicom_list[1])
 
-		# Check if any dicoms have non greyscale 
+		# Check if any dicoms have non greyscale
 		df.PhotometricInterpretation = 'MONOCHROME2'
 
-		# Save Study Instance ID 
-		study_id = df.StudyInstanceUID  
+		# Save Study Instance ID
+		study_id = df.StudyInstanceUID
 		if study_id in ref_data['study_instance_uid'].to_string():
 			mrn =  ref_data.loc[ref_data['study_instance_uid'] == study_id, 'anon_mrn'].values[0]
 			accession = ref_data.loc[ref_data['study_instance_uid'] == study_id, 'accession'].values[0]
@@ -56,7 +56,7 @@ def csv_tarcompress(root_dir, filename, output_dir, csv_reference):
 
 def dcm_tarcompress(root_dir, filename, output_dir):
 	'''
-	First reads dcm files and renames the filename to this 
+	First reads dcm files and renames the filename to this
 	Then compresses folders into tarfiles
 	'''
 
@@ -66,12 +66,12 @@ def dcm_tarcompress(root_dir, filename, output_dir):
 		#print(dicom_list[1])
 		df = dcm.dcmread(dicom_list[1])
 
-		# Check if any dicoms have non greyscale 
+		# Check if any dicoms have non greyscale
 		df.PhotometricInterpretation = 'MONOCHROME2'
 
-		# Save series name + frame location 
-		accession = df.AccessionNumber  
-		mrn = df.PatientID 
+		# Save series name + frame location
+		accession = df.AccessionNumber
+		mrn = df.PatientID
 		print('Processing:', mrn+'-'+accession)
 
 		# Dump entire thing as a tarfile with anonymized mrn as basename
@@ -101,12 +101,12 @@ def nl_tarcompress(root_dir, filename, output_dir):
 	'''
 
 	dicom_list = glob.glob(os.path.join(root_dir, filename, '*', '*'))
-	
+
 	counter = 0
-	for i in dicom_list:	
+	for i in dicom_list:
 		try:
 			df = dcm.dcmread(i, force=True)
-			series_description = df.SeriesDescription  
+			series_description = df.SeriesDescription
 
 			dicom_basename = os.path.split(i)[1]
 			accession_number = os.path.split(os.path.split(i)[0])[1]
@@ -126,7 +126,7 @@ def nl_tarcompress(root_dir, filename, output_dir):
 
 
 if __name__ == '__main__':
-	
+
 
 	parser = ap.ArgumentParser(
 		description="Tar compress uncompressed data",
@@ -149,7 +149,7 @@ if __name__ == '__main__':
 	debug = args['debug']
 	mode = args['mode']
 	output_dir = args['output_dir']
-	os.makedirs(output_dir, exist_ok=True)	
+	os.makedirs(output_dir, exist_ok=True)
 
 	# Start worker pool
 	p = multiprocessing.Pool(processes=cpus)
@@ -160,7 +160,7 @@ if __name__ == '__main__':
 
 	if mode == 'simple':
 		'''
-		Use this to just tar compress preserving dicom folder name 
+		Use this to just tar compress preserving dicom folder name
 		'''
 		for f in filenames:
 			if cpus > 1:
@@ -170,7 +170,7 @@ if __name__ == '__main__':
 
 	elif mode == 'dicom':
 		'''
-		Use if reading MRN and Accession numbers from dicom files and using them directly 
+		Use if reading MRN and Accession numbers from dicom files and using them directly
 		(Assumes your files are anonymized, please for the love of god don't do this if they aren't)
 		'''
 		for f in filenames:
@@ -196,10 +196,9 @@ if __name__ == '__main__':
 			if cpus > 1:
 				p.apply_async(nl_tarcompress, [root_dir, f, output_dir])
 			else:
-				nl_tarcompress(root_dir, f, output_dir)	
+				nl_tarcompress(root_dir, f, output_dir)
 
 	p.close()
 	p.join()
 
-	print('Elapsed time:', round((time.time() - start_time), 2))			
-
+	print('Elapsed time:', round((time.time() - start_time), 2))
