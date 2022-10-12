@@ -8,7 +8,7 @@ stanford_RF3da2ty4 (MRN parent folder)
 	├── SAX_FIESTA_BH_1			{data: 4d array} {attr: fps, total images, slice frame index}
 	├── SAX_FIESTA_BH_2			{data: 4d array} {attr: fps, total images, slice frame index}
 	├── STACK_LV3CH_FIESTA_BH 	{data: 4d array} {attr: fps, total images, slice frame index}
-	
+
 '''
 
 import os
@@ -22,17 +22,17 @@ from shutil import move, rmtree
 import glob
 import tarfile
 import argparse as ap
-import matplotlib  
+import matplotlib
 import h5py
 import random
-from torchvideotransforms import video_transforms, volume_transforms 
+from torchvideotransforms import video_transforms, volume_transforms
 import matplotlib.pyplot as plt
 import time
 from natsort import natsorted
 
 from pyaml_env import BaseConfig, parse_config
 
-# Read local_config.yaml for local variables 
+# Read local_config.yaml for local variables
 cfg = BaseConfig(parse_config('../local_config.yaml'))
 TMP_DIR = cfg.tmp_dir
 
@@ -53,24 +53,26 @@ class CMRI_PreProcessor:
 		'''
 		Reads in dicom file and converts to numpy array
 		Greyscale imaging is stored in 3 channels for downstream compatibility with pre-trained models
-		Returns: array [c, f, w, h] 
+		Returns: array [c, f, w, h]
 		'''
 		try:
 			df = dcm.dcmread(input_file, force=True)
 
-			# Check if any dicoms have non greyscale 
+			# Check if any dicoms have non greyscale
 			df.PhotometricInterpretation = 'MONOCHROME2'
 
-			# Save series name (with some cleanup) + frame location 
+			# Save series name (with some cleanup) + frame location
 			series = df.SeriesDescription.replace(" ","_")
 			series = series.replace("/","_")
+			series = series.replace("\\","_") # windows compatibility: directory seperator
+			series = series.replace(":","_") # windows compatibility: illegal character in filename
 			frame_loc = df.SliceLocation
-			accession = df.AccessionNumber  
-			mrn = df.PatientID 
+			accession = df.AccessionNumber
+			mrn = df.PatientID
 
 			# TODO:
 			### len==3 section probably buggy af since at this point its all images not video ###
-			if len(df.pixel_array.shape) == 3: 
+			if len(df.pixel_array.shape) == 3:
 				# f, w, h, c
 				frames = df.pixel_array.shape[0]
 				r, g, b = df.pixel_array[:,:,:,0], df.pixel_array[:,:,:,1], df.pixel_array[:,:,:,2]
@@ -96,7 +98,7 @@ class CMRI_PreProcessor:
 
 	def collate_arrays(self, dcm_subfolder, sax_stacked=False):
 		'''
-		MRI sequences save each frame as a separate array with it's own metadata. 
+		MRI sequences save each frame as a separate array with it's own metadata.
 		Function collate_arrays combines each folder of dcm images into a single array
 		Returns reorderd video array, series name, slice frames for multi-slice sequences, total images
 		'''
@@ -125,7 +127,10 @@ class CMRI_PreProcessor:
 		else:
 			dcm_list = os.listdir(dcm_subfolder)
 			try:
-				dcm_list = natsorted(dcm_list)
+				# natsort does not work if the dicom filenames are not in order (as is the case for AMC Deeprisk)
+				# Instead, sort by the SliceLocation (should be basal to apical?) and InstanceNumber (order of recording in the same slice location)
+				# .get method is used to put random value 9999 when these attributes don't exist for some files, otherwise sorting is not possible
+				dcm_list.sort(key=lambda x: (float(dcm.dcmread(os.path.join(dcm_subfolder, x)).get("SliceLocation", 9999)), -int(dcm.dcmread(os.path.join(dcm_subfolder, x)).get("InstanceNumber", 9999))), reverse=True)
 			except:
 				print('WARNING: Potential sorting error for SAX files')
 				dcm_list.sort()
@@ -151,28 +156,28 @@ class CMRI_PreProcessor:
 			video_transform_list = [video_transforms.Resize(self.framesize), video_transforms.CenterCrop(round(0.75*self.framesize))]
 			transforms = video_transforms.Compose(video_transform_list)
 			collated_array = transforms(collated_array)
-			
+
 			# converts [c, h, w, f] to [c, f, h, w] for pytorchvideo transforms downstream
 			collated_array = np.array(collated_array).transpose(0, 3, 1, 2)
 
 			'''
 			Specific workarounds for strange institution specific data handling
-			- UKBIOBANK: 
+			- UKBIOBANK:
 			  Has spaces in mrn, and accessions have a weird format that needs cleaning
-			- MEDSTAR: 
+			- MEDSTAR:
 			  dicom data has blank mrn and accessions, that info is pulled directly from tar filename instead
 			'''
 			if self.institution_prefix == "ukbiobank":
 				accession = mrn.replace(" ", "")
 				mrn = dcm_subfolder.split('/')[-2]
-			
+
 			if self.institution_prefix == "medstar":
 				mrn = self.filename.split('-')[0]
 				accession = self.filename.split('-')[1][:-4]
 
 			return collated_array, series, slice_frames, total_images, mrn, accession
 
-		except ValueError as v: 
+		except ValueError as v:
 			print(v)
 			print('Ragged numpy arrays, Skipping..')
 			collated_array = None
@@ -183,25 +188,25 @@ class CMRI_PreProcessor:
 			print(e)
 			print('Invalid array size. Skipping...')
 			return None
-		
+
 
 	def array_to_h5(self, collated_array, series, slice_indices, total_images, mrn, accession):
 		'''
 		Takes in numpy array and converts into h5 file.
 		h5 filename is set to parent array filename (accession number etc)
-		h5 contains uniquely named datasets for pixel data array from imaging view / modality 
-		
+		h5 contains uniquely named datasets for pixel data array from imaging view / modality
+
 		The first few arguments are positional (up to accession)
 		'''
 
 		os.makedirs(os.path.join(self.output_dir, self.institution_prefix + '_' + mrn), exist_ok=True)
 		new_filename = accession + '.h5'
-		
+
 		# Create hdf5 file or append to existing if available
 		h5f = h5py.File(os.path.join(self.output_dir, self.institution_prefix + '_' + mrn, new_filename), 'a')
 		print(f'Exporting {accession}-{series} as hdf5 dataset...')
-		
-		# Store each series as an array (Skips if series already exists. Might need to rework this 
+
+		# Store each series as an array (Skips if series already exists. Might need to rework this
 		try:
 			dset = h5f.create_dataset(series, data=collated_array, dtype='f', compression=self.compression)
 
@@ -228,7 +233,7 @@ class CMRI_PreProcessor:
 		for dcm_subfolder in os.listdir(dcm_directory):
 			dicom_list = os.listdir(dcm_subfolder)
 			df = dcm.dcmread(os.path.join(dcm_subfolder, dicom_list[0]), force=True)
-			
+
 			if "CINE_segmented_SAX" in df.SeriesDescription and "InlineVF" not in df.SeriesDescription:
 				sax_files_list.append(dcm_subfolder)
 				print(f'Stacking {df.SeriesDescription}')
@@ -239,15 +244,15 @@ class CMRI_PreProcessor:
 					print('Skipping scan with random overlay...')
 				else:
 					if len(glob.glob(os.path.join(dcm_subfolder, '*'))) > 1:
-						collated_array = self.collate_arrays(dcm_subfolder, sax_stacked=False)  
+						collated_array = self.collate_arrays(dcm_subfolder, sax_stacked=False)
 
 					if collated_array is not None:
 						self.array_to_h5(*(collated_array))
 
-		# Process ukbiobank SAX subfolders all as a single stack after reordering 
-		if len(sax_files_list) > 0:	
+		# Process ukbiobank SAX subfolders all as a single stack after reordering
+		if len(sax_files_list) > 0:
 			sax_files_list.sort(key=lambda x: dcm.dcmread(os.path.join(x,os.listdir(x)[0])).SliceLocation, reverse=True)
-			
+
 			# opencv limitation where resize operation can only take place on less than 512 frames at a time, hard code to maximum of 10 slices (500 frames)
 			print(f'{len(sax_files_list[0:10])} SAX slices to export...')
 			collated_array = self.collate_arrays(sax_files_list[0:10], sax_stacked=True)
@@ -275,7 +280,7 @@ class CMRI_PreProcessor:
 
 				else:
 					if len(glob.glob(os.path.join(dcm_subfolder, '*'))) > 1:
-						collated_array = self.collate_arrays(dcm_subfolder, sax_stacked=False)  
+						collated_array = self.collate_arrays(dcm_subfolder, sax_stacked=False)
 
 						if collated_array is not None:
 							self.array_to_h5(*(collated_array))
@@ -293,7 +298,7 @@ class CMRI_PreProcessor:
 						print('Skipping scan with random overlay...')
 					else:
 						if len(glob.glob(os.path.join(dcm_subfolder, '*'))) > 1:
-							collated_array = self.collate_arrays(dcm_subfolder, sax_stacked=False)  
+							collated_array = self.collate_arrays(dcm_subfolder, sax_stacked=False)
 
 							if collated_array is not None:
 								self.array_to_h5(*(collated_array))
@@ -302,7 +307,7 @@ class CMRI_PreProcessor:
 
 		if len(sax_files_list) > 0:
 			sax_files_list.sort(key=lambda x: dcm.dcmread(os.path.join(x,os.listdir(x)[0])).SliceLocation, reverse=True)
-		
+
 			# opencv limitation where resize operation can only take place on less than 512 frames at a time, hard code to maximum of 10 slices (500 frames)
 			print(f'{len(sax_files_list[0:10])} SAX slices to export...')
 			collated_array = self.collate_arrays(sax_files_list[0:10], sax_stacked=True)
@@ -314,8 +319,8 @@ class CMRI_PreProcessor:
 		else:
 			for dcm_subfolder in glob.glob(os.path.join(dcm_directory, '*')):
 				if len(glob.glob(os.path.join(dcm_subfolder, '*'))) > 1:
-					collated_array = self.collate_arrays(dcm_subfolder) 
-					
+					collated_array = self.collate_arrays(dcm_subfolder)
+
 					if collated_array is not None:
 						self.array_to_h5(*(collated_array))
 					else:
@@ -336,7 +341,7 @@ class CMRI_PreProcessor:
 		tar.extractall(tar_extract_path)
 		tar.close()
 
-		# List series folders and iterate over them all one by one 
+		# List series folders and iterate over them all one by one
 		# Return arrays for each folder, convert to hdf5 therafter
 		print(f'Extracted tarfile for {self.filename[:-4]} ...')
 		dcm_directory = glob.glob(os.path.join(tar_extract_path, '*', '*'))
@@ -344,12 +349,12 @@ class CMRI_PreProcessor:
 		# Handles separate pipelines based on data source
 		self.view_disambugator(dcm_directory[0])
 
-		# Clean up after to save space  
+		# Clean up after to save space
 		try:
 			rmtree(tar_extract_path, ignore_errors=True)
 		except Exception as ex:
 			print('Failed to purge TMP_DIR')
-		
+
 		print(f'Completed processing {self.filename}')
 
 
@@ -370,7 +375,7 @@ if __name__ == '__main__':
 	parser.add_argument('-s', '--framesize', metavar='', type=int, default='480', help='framesize in pixels')
 	parser.add_argument('-v', '--visualize', action='store_true', required=False, help='print data from random hdf5 file in output folder')
 	parser.add_argument('-i', '--institution', metavar='', required=True, help='institution name to use as prefix for hdf5 files')
-	
+
 	args = vars(parser.parse_args())
 	print(args)
 
@@ -385,33 +390,33 @@ if __name__ == '__main__':
 
 	#For gcloud:
 	output_dir = args['output_dir']
-	os.makedirs(output_dir, exist_ok=True)	
+	os.makedirs(output_dir, exist_ok=True)
 
 	#### Visualize one frame from hdf5 MRI array ####
 	if visualize == True:
 		filenames = glob.glob(os.path.join(output_dir,'*','*'))
 		file_list_final = []
-		
+
 		for f in filenames:
 			if ".h5" in f:
 				file_list_final.append(f)
-			
+
 		if file_list_final == []:
 			print('No hdf5 files found..')
 
 		else:
 			random_file = random.choice(file_list_final)
 			start_time = time.time()
-			
+
 			dat = h5py.File(os.path.join(output_dir, random_file), 'r')
 			dat.visit(print)
 
 			#Reading hdf5 file once is faster when you have to open multiple arrays from it afterwards (I/O bound)
 			dat = dat.get(random.choice(list(dat.keys())))
 			print(time.time() - start_time)
-			
+
 			print(dat)
-			
+
 			# Plotting Code (hdf5 is saved as [c, f h, w])
 			array = np.array(dat).transpose(1, 2, 3, 0)
 
@@ -434,7 +439,7 @@ if __name__ == '__main__':
 
 		else:
 			filenames = os.listdir(root_dir)
-			
+
 		print('------------------------------------')
 		print(f'Total scans (Accession numbers) available: {len(filenames)}')
 		print('Checking failure rate..')
@@ -442,13 +447,13 @@ if __name__ == '__main__':
 		outputs = os.listdir(output_dir)
 		processed_files = []
 		for o in outputs:
-			
+
 			if o.partition('_')[0] == institution_prefix:
 				institution, sep, mrn = o.partition('_')
 				acc = glob.glob(os.path.join(output_dir,o,'*'))
 				for item in acc:
 					filename = mrn + '-' + os.path.basename(item[:-2]) + 'tgz'
-					
+
 					# Hack for ukbiobank:
 					if institution == 'ukbiobank':
 						filename = mrn+'.tgz'
@@ -457,7 +462,7 @@ if __name__ == '__main__':
 
 		incomplete = set(filenames).difference(set(processed_files))
 		print('Successfully processed accessions:', len(processed_files))
-		print(f'Did not process {len(incomplete)} files.') 
+		print(f'Did not process {len(incomplete)} files.')
 		print('Exporting failed runs...')
 		print('------------------------------------')
 
@@ -502,4 +507,3 @@ if __name__ == '__main__':
 		p.join()
 
 		print(f'Elapsed time: {round((time.time() - start_time), 2)}')
-

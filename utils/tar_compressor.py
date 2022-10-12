@@ -107,6 +107,13 @@ def nl_tarcompress(root_dir, filename, output_dir):
 		try:
 			df = dcm.dcmread(i, force=True)
 			series_description = df.SeriesDescription
+			series_description = series_description.replace(" ","_")
+			series_description = series_description.replace("/","_")
+			series_description = series_description.replace("\\", "_") # windows compatibility: remove directory separator
+			series_description = series_description.replace(":","_") # windows compatibility: remove illegal character for filename
+			# if file has no series description, set placeholder (otherwise folder structure is incorrect)
+			if series_description == "":
+				series_description = 'no_series_description'
 
 			dicom_basename = os.path.split(i)[1]
 			accession_number = os.path.split(os.path.split(i)[0])[1]
@@ -120,7 +127,7 @@ def nl_tarcompress(root_dir, filename, output_dir):
 
 	# Final compression
 	simple_tarcompress(TMP_DIR, filename, output_dir)
-	shutil.rmtree(os.path.join(TMP_DIR, filename))
+	shutil.rmtree(os.path.join(TMP_DIR, filename), ignore_errors=True)
 	print(f'{bcolors.OK}Successfully exported {counter} dicom files to tar{bcolors.END}')
 
 
