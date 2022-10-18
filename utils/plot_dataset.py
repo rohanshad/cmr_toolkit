@@ -1,41 +1,41 @@
 '''
-Script to visualize and plot MRI hdf5 dataset objects 
+Script to visualize and plot MRI hdf5 dataset objects
 '''
 
 import torch
 import matplotlib
 import matplotlib.pyplot as plt
 import random
-import os 
+import os
 import numpy as np
 import h5py
 import argparse as ap
 import glob
 import imageio
-import imageio_ffmpeg 
+import imageio_ffmpeg
 import subprocess
 
 from pyaml_env import BaseConfig, parse_config
 
-# Read local_config.yaml for local variables 
-cfg = BaseConfig(parse_config('../local_config.yaml'))
+# Read local_config.yaml for local variables
+cfg = BaseConfig(parse_config(Path(__file__).parent.resolve().parent.joinpath('local_config.yaml')))
 TMP_DIR = cfg.tmp_dir
-BUCKET_NAME = cfg.bucket_name
+#BUCKET_NAME = cfg.bucket_name
 
 def generate_video_mp4(array, view, root_dir, input_hdf5, output_directory):
 	'''
 	Generates a mp4 video from input arrays using ffmpeg
 	Retains magma color scheme because it looks dope, but might want to use b/w instead
 	'''
-	
+
 	save_dir = os.path.join(root_dir, 'tmp', os.path.basename(input_hdf5[:-3])+'_pngs')
 	os.makedirs(save_dir, exist_ok = True)
 
 	for i in range(array.shape[0]):
 		plt.imshow(array[i][:,:,1]/225, cmap='magma')
 		plt.axis('off')
-		# Might keep axis but remove bbox 
-		plt.savefig(os.path.join(save_dir, 'frame%02d.png' %i), bbox_inches='tight')	
+		# Might keep axis but remove bbox
+		plt.savefig(os.path.join(save_dir, 'frame%02d.png' %i), bbox_inches='tight')
 
 	output_filename = os.path.join(output_directory, os.path.basename(input_hdf5)[:-3]+'_'+view+'.mp4')
 	input_filename = os.path.join(root_dir, 'tmp', os.path.basename(input_hdf5[:-3])+'_pngs','frame%02d.png')
@@ -76,7 +76,7 @@ def hdf5_to_array(input_hdf5, series):
 	array = np.array(dat).transpose(1, 2, 3, 0)
 
 	return array
-	
+
 def hdf5stack_to_array(input_hdf5, series):
 	'''
 	Processes a random hdf5 file of a specific series and returns a np.array and list of frame slices
@@ -87,11 +87,11 @@ def hdf5stack_to_array(input_hdf5, series):
 	slices = dat.attrs['slice_frames']
 
 	return array, slices
-	
+
 def plot_random_frames(input_arrays):
 	'''
 	Plots on random frame each from list of input arrays
-	
+
 	Args:
 		array (float32):	np.array from hdf5 dataset {float32}
 	'''
@@ -114,7 +114,7 @@ def plot_random_frames(input_arrays):
 def plot_study_sequence(array, skip_period):
 	'''
 	Plots each frame of a single video / MRI slice on time axis
-	
+
 	Args:
 		array (float32):	np.array from hdf5 dataset
 		skip_period	(int):	user supplied skip period for plotting
@@ -122,6 +122,7 @@ def plot_study_sequence(array, skip_period):
 
 	# Array input is f, c, h, w
 	print(f'Total number of frames: {np.size(array, 0)}')
+	print(f'Array shape: {array.shape}')
 	total_frames = np.size(array, 0)
 	array = array[0:total_frames:skip_period,:,:,:]
 
@@ -142,7 +143,7 @@ def plot_study_sequence(array, skip_period):
 def plot_study_slices(array, slice_index, skip_period):
 	'''
 	Plots the first frame of each new slice in a stack (eg. SAX stack)
-	
+
 	Args:
 		array (float32):	np.array from hdf5 dataset
 		slice_index (int):	list of integers from hdf5.attribute 'slice_frames'
@@ -169,7 +170,7 @@ def plot_study_slices(array, slice_index, skip_period):
 
 
 if __name__ == '__main__':
-	
+
 
 	parser = ap.ArgumentParser(
 		description="Plot samples from MRI hdf5 datasets v0.1",
@@ -180,7 +181,7 @@ if __name__ == '__main__':
 	parser.add_argument('-v', '--view_name', metavar='', required=False, default='4CH_FIESTA_BH', help='View to plot')
 	parser.add_argument('-s', '--skip_period', metavar='', type=int, default=0, help='skip interval for some plots')
 	parser.add_argument('-m', '--mode', metavar='', required=True, help='options: grid, sequence, slices, video')
-	
+
 	# Add some shit here for specific resolution shit
 
 	args = vars(parser.parse_args())
@@ -197,13 +198,15 @@ if __name__ == '__main__':
 
 	for f in filenames:
 		if ".h5" in f:
-			file_list_final.append(f)
+			if view_name in h5py.File(f, 'r'):
+				file_list_final.append(f)
+	print(f"{len(file_list_final)} files with view {view_name} ")
 
 
 	if mode == 'grid':
 		random_file = random.sample(file_list_final, 15)
 
-		# Plots a grid of randomly selected files 
+		# Plots a grid of randomly selected files
 
 		plot_random_frames(hdf5list_to_array(random_file, view_name))
 
@@ -211,7 +214,7 @@ if __name__ == '__main__':
 		random_file = random.choice(file_list_final)
 
 		# Plots a long sequence of images for cardiac cycle
-		plot_study_sequence(hdf5_to_array(random_file, view_name), skip_period = 4)
+		plot_study_sequence(hdf5_to_array(random_file, view_name), skip_period = 2)
 
 	elif mode == 'slices':
 		random_file = random.choice(file_list_final)
@@ -233,10 +236,3 @@ if __name__ == '__main__':
 			except Exception as e:
 				print(e)
 				continue
-
-
-
-
-
-
-

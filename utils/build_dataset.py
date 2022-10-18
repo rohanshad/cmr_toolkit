@@ -1,6 +1,6 @@
 '''
-Reads in master hdf5 storage that is the output of preprocess_mri.py and builds view-specific hdf5 datasets 
-for faster train-time performance. Uses the same csv safelist method of generating specific datasets if needed 
+Reads in master hdf5 storage that is the output of preprocess_mri.py and builds view-specific hdf5 datasets
+for faster train-time performance. Uses the same csv safelist method of generating specific datasets if needed
 
 Input hdf5 dataset format:
 stanford_RF3da3244
@@ -10,9 +10,9 @@ stanford_RF3da3244
 	├── SAX_FIESTA_BH_1			{data: 4d array} {attr: fps, total images, slice frame index}
 	├── SAX_FIESTA_BH_2			{data: 4d array} {attr: fps, total images, slice frame index}
 	├── STACK_LV3CH_FIESTA_BH 	{data: 4d array} {attr: fps, total images, slice frame index}
-	
 
-Output hdf4 format:
+
+Output hdf5 format:
 stanford_RF3da3244
 ├── RF3da3581.h5
 ├── RF3lv2173.h5
@@ -33,7 +33,7 @@ from shutil import move, rmtree
 import glob
 import tarfile
 import argparse as ap
-import matplotlib 
+import matplotlib
 import h5py
 import random
 import matplotlib.pyplot as plt
@@ -45,12 +45,12 @@ def extract_series(root_dir, folder_name, output_dir, series, series_map, compre
 	'''
 	Opens a folder [name: institution_mrn] containing hdf5 datasets with filename [name = accession number]
 	series_df is a pandas dataframe that matches raw series names to the cleaned versions from series_map
-	
-	
+
+
 	Series of interest copied into separate hdf5 with all attrs. Series name at this point is cleaned version.
 	Function does not return anything
 	'''
-	
+
 	accession_list = glob.glob(os.path.join(root_dir,folder_name,'*'))
 	series = [series] if isinstance(series, str) else series
 	safe_makedir(os.path.join(output_dir, folder_name))
@@ -69,11 +69,11 @@ def extract_series(root_dir, folder_name, output_dir, series, series_map, compre
 				print('Extracting', s, 'for', folder_name, '...')
 				print(series_df.loc[(series_df['cleaned_series_names'] == s)])
 				dest_hdf5 = h5py.File(os.path.join(output_dir, folder_name, os.path.basename(accession)), 'a')
-				
+
 				# Create new hdf5 file
-				source_hdf5.copy(source_hdf5[raw_series_name], dest_hdf5, name=s) 
+				source_hdf5.copy(source_hdf5[raw_series_name], dest_hdf5, name=s)
 				dest_hdf5.close()
-			
+
 			except:
 				print('Could not extract', s, 'for', folder_name+'-'+os.path.basename(accession))
 
@@ -116,17 +116,17 @@ if __name__ == '__main__':
 
 	#For gcloud:
 	output_dir = args['output_dir']
-	safe_makedir(output_dir)	
+	safe_makedir(output_dir)
 
 	#### Visualize one frame from hdf5 MRI array (might keep this in a utils script later) ####
 	if visualize == True:
 		filenames = glob.glob(os.path.join(output_dir,'*','*'))
 		file_list_final = []
-		
+
 		for f in filenames:
 			if ".h5" in f:
 				file_list_final.append(f)
-			
+
 		if file_list_final == []:
 			print('No hdf5 files found..')
 
@@ -141,20 +141,20 @@ if __name__ == '__main__':
 			#Reading hdf5 file once is faster when you have to open multiple arrays from it afterwards (I/O bound)
 			dat = dat.get(random.choice(list(dat.keys())))
 			print(dat)
-			
+
 			# Plotting Code (hddf5 is saved as f, c, h, w)
 			array = np.array(dat).transpose(0, 2, 3, 1)
 			print(f'number of frames: {np.size(array, 1)}')
 			plt.imshow((array[random.choice(list(range(np.size(array, 0))))])[:,:,1]/255, cmap='magma')
 			plt.show()
 
-	
+
 	### Debugger Module ####
 	elif debug == True:
 
 		input_filelist = glob.glob(os.path.join(root_dir,'*','*'))
 		processed_filelist = glob.glob(os.path.join(output_dir,'*','*'))
-		
+
 		print()
 		print('Running in debug mode...')
 
@@ -178,7 +178,7 @@ if __name__ == '__main__':
 			outputs.append(parent_folder+'-'+accession)
 
 		print('Total number of views saved:', len(sum(main_view_list, [])))
-		
+
 		inputs = []
 		for i in input_filelist:
 			parent_folder = i.split('/')[-2]
@@ -187,7 +187,7 @@ if __name__ == '__main__':
 			inputs.append(parent_folder+'-'+accession)
 
 		incomplete = set(inputs).difference(set(outputs))
-		print('Did not process', len(incomplete), 'files.') 
+		print('Did not process', len(incomplete), 'files.')
 		print('Exporting failed files to csv')
 		incomplete_df = pd.DataFrame(list(incomplete), columns = ["filenames"])
 		incomplete_df.to_csv('failed_to_process.csv', index=False)
@@ -218,7 +218,7 @@ if __name__ == '__main__':
 		print('Extracting all', series, 'views:')
 		for f in folder_names:
 			# Each folder is a unique MRN with hdf5 files inside that represent accession numbers
-			
+
 			if cpus > 1:
 				p.apply_async(extract_series,[root_dir, f, output_dir, series, series_map, compression])
 			else:
@@ -241,10 +241,3 @@ if __name__ == '__main__':
 		print('Total output Accessions:', len(glob.glob(os.path.join(output_dir,'*','*'))))
 
 		print(('------------------------------------'))
-		
-
-
-
-
-
-
