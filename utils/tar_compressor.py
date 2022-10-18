@@ -15,9 +15,10 @@ import shutil
 import bcolors
 
 from pyaml_env import BaseConfig, parse_config
+from pathlib import Path
 
 # Read local_config.yaml for local variables
-cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
+cfg = BaseConfig(parse_config(Path(__file__).parent.resolve().parent.joinpath('local_config.yaml')))
 TMP_DIR = cfg.tmp_dir
 
 def csv_tarcompress(root_dir, filename, output_dir, csv_reference):

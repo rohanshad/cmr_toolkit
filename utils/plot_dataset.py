@@ -16,6 +16,7 @@ import imageio_ffmpeg
 import subprocess
 
 from pyaml_env import BaseConfig, parse_config
+from pathlib import Path
 
 # Read local_config.yaml for local variables
 cfg = BaseConfig(parse_config(Path(__file__).parent.resolve().parent.joinpath('local_config.yaml')))
