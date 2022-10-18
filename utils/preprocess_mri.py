@@ -33,7 +33,7 @@ from natsort import natsorted
 from pyaml_env import BaseConfig, parse_config
 
 # Read local_config.yaml for local variables
-cfg = BaseConfig(parse_config('../local_config.yaml'))
+cfg = BaseConfig(parse_config(Path(__file__).parent.resolve().parent.joinpath('local_config.yaml')))
 TMP_DIR = cfg.tmp_dir
 
 
@@ -66,6 +66,9 @@ class CMRI_PreProcessor:
 			series = series.replace("/","_")
 			series = series.replace("\\","_") # windows compatibility: directory seperator
 			series = series.replace(":","_") # windows compatibility: illegal character in filename
+			# if file has no series description, set placeholder
+			if series == "":
+				series = 'no_series_description'
 			frame_loc = df.SliceLocation
 			accession = df.AccessionNumber
 			mrn = df.PatientID
@@ -110,9 +113,9 @@ class CMRI_PreProcessor:
 			for folder in dcm_subfolder:
 				dcm_list = os.listdir(folder)
 				try:
-					dcm_list.natsorted()
-				except:
-					print('WARNING: Potential sorting error for SAX files')
+					dcm_list.sort(key=lambda x: (float(dcm.dcmread(os.path.join(folder, x)).get("SliceLocation", 9999)), -int(dcm.dcmread(os.path.join(folder, x)).get("InstanceNumber", 9999))), reverse=True)
+				except Exception as e:
+					print('WARNING: Potential sorting error for SAX files', e)
 					dcm_list.sort()
 				total_images += len(dcm_list)
 				for d in dcm_list:
@@ -121,6 +124,7 @@ class CMRI_PreProcessor:
 						video_list.append(dcm_data[0])
 						slice_location.append(dcm_data[2])
 						series = dcm_data[1]
+						accession = dcm_data[3]
 						mrn = dcm_data[4]
 					else:
 						continue
@@ -265,7 +269,10 @@ class CMRI_PreProcessor:
 		Iterate over multiple subfolders inside dcm_directory for all non-ukbiobank datasets
 		'''
 		# Process separated views
-
+		if self.institution_prefix == 'distant':
+			dcm_directory = glob.glob(os.path.join(dcm_directory, '*'))
+			assert len(dcm_directory) == 1, f"Unusual folder structure: {dcm_directory}"
+			dcm_directory = dcm_directory[0]
 		sax_files_list = []
 		for dcm_subfolder in glob.glob(os.path.join(dcm_directory, '*')):
 			dicom_list = os.listdir(dcm_subfolder)
@@ -315,10 +322,21 @@ class CMRI_PreProcessor:
 			if collated_array is not None:
 				self.array_to_h5(*(collated_array))
 
+		if self.institution_prefix == 'distant':
+			# dcm directory contains multiple series, but also separate maps for each slice in those series, e.g. 1_SAX ... 8_SAX, 9_4CH, 10_3CH
+			series_names = {s.split('_', 1)[-1] for s in os.listdir(dcm_directory)} # remove slice number if present
+			for series_name in series_names:
+				subfolder_list = [x for x in glob.glob(os.path.join(dcm_directory, f'*{series_name}'))]
+				subfolder_list.sort(key=lambda x: dcm.dcmread(os.path.join(x,os.listdir(x)[0])).SliceLocation, reverse=True)
+				collated_array = self.collate_arrays(subfolder_list, sax_stacked=True)
+
+				if collated_array is not None:
+					self.array_to_h5(*(collated_array))
+
 		# OTHER HOSPITALS
 		else:
 			for dcm_subfolder in glob.glob(os.path.join(dcm_directory, '*')):
-				if len(glob.glob(os.path.join(dcm_subfolder, '*'))) > 1:
+				if len(glob.glob(os.path.join(dcm_subfolder, '*'))) >= 1:
 					collated_array = self.collate_arrays(dcm_subfolder)
 
 					if collated_array is not None:
@@ -347,7 +365,9 @@ class CMRI_PreProcessor:
 		dcm_directory = glob.glob(os.path.join(tar_extract_path, '*', '*'))
 
 		# Handles separate pipelines based on data source
-		self.view_disambugator(dcm_directory[0])
+		# loop over accessions for patient
+		for dir_accession in dcm_directory:
+			self.view_disambugator(dir_accession)
 
 		# Clean up after to save space
 		try:
