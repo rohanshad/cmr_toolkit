@@ -29,6 +29,7 @@ from torchvideotransforms import video_transforms, volume_transforms
 import matplotlib.pyplot as plt
 import time
 from natsort import natsorted
+import re
 
 from pyaml_env import BaseConfig, parse_config
 from pathlib import Path
@@ -171,6 +172,8 @@ class CMRI_PreProcessor:
 			  Has spaces in mrn, and accessions have a weird format that needs cleaning
 			- MEDSTAR:
 			  dicom data has blank mrn and accessions, that info is pulled directly from tar filename instead
+			 -DISTANT:
+			  some SAX series have slice name in SeriesDescription
 			'''
 			if self.institution_prefix == "ukbiobank":
 				accession = mrn.replace(" ", "")
@@ -179,6 +182,9 @@ class CMRI_PreProcessor:
 			if self.institution_prefix == "medstar":
 				mrn = self.filename.split('-')[0]
 				accession = self.filename.split('-')[1][:-4]
+
+			if self.institution_prefix == "distant":
+				series = re.sub('_b\d+$', '', series) # some SAX files have _b{slice_number} at the end
 
 			return collated_array, series, slice_frames, total_images, mrn, accession
 
@@ -324,11 +330,15 @@ class CMRI_PreProcessor:
 				self.array_to_h5(*(collated_array))
 
 		if self.institution_prefix == 'distant':
+			def _distant_clean_foldername(n):
+				n = n.split('_', 1)[-1] # remove slice number in path name
+				n = re.sub('_b\d+$', '', n) # some SAX files have _b{slice_number} at the end as well, remove to join these maps
+				return n
+
 			# dcm directory contains multiple series, but also separate maps for each slice in those series, e.g. 1_SAX ... 8_SAX, 9_4CH, 10_3CH
-			series_names = {s.split('_', 1)[-1] for s in os.listdir(dcm_directory)} # remove slice number if present
+			series_names = {_distant_clean_foldername(s) for s in os.listdir(dcm_directory)}
 			for series_name in series_names:
-				subfolder_list = [x for x in glob.glob(os.path.join(dcm_directory, f'*{series_name}'))]
-				subfolder_list.sort(key=lambda x: dcm.dcmread(os.path.join(x,os.listdir(x)[0])).SliceLocation, reverse=True)
+				subfolder_list = [x for x in glob.glob(os.path.join(dcm_directory, f'*{series_name}*')) if _distant_clean_foldername(str(Path(x).stem)) == series_name]
 				collated_array = self.collate_arrays(subfolder_list, sax_stacked=True)
 
 				if collated_array is not None:
