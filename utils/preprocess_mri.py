@@ -29,12 +29,19 @@ from torchvideotransforms import video_transforms, volume_transforms
 import matplotlib.pyplot as plt
 import time
 from natsort import natsorted
-
+import platform
 from pyaml_env import BaseConfig, parse_config
 
 # Read local_config.yaml for local variables 
-cfg = BaseConfig(parse_config('../local_config.yaml'))
-TMP_DIR = cfg.tmp_dir
+device = platform.uname().node.replace('-','_')
+cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
+if 'sh' in device:
+	device = 'sherlock'
+elif '211' in device:
+	device = 'cubic'
+device = platform.uname().node.replace('-','_')
+TMP_DIR =  getattr(cfg, device).tmp_dir
+BUCKET_NAME =  cfg.global_settings.bucket_name
 
 
 class CMRI_PreProcessor:
@@ -56,8 +63,7 @@ class CMRI_PreProcessor:
 		Returns: array [c, f, w, h] 
 		'''
 		try:
-			df = dcm.dcmread(input_file, force=True)
-
+			df = dcm.dcmread(input_file)
 			# Check if any dicoms have non greyscale 
 			df.PhotometricInterpretation = 'MONOCHROME2'
 
@@ -81,13 +87,19 @@ class CMRI_PreProcessor:
 
 			elif len(df.pixel_array.shape) == 2:
 				array = np.repeat(df.pixel_array[None,...],self.channels,axis=0)
-				# array here is c, f, w, h
 
 			else:
 				# Placeholder empty frame so things don't break
 				print('Invalid dimensions')
 
-			return array, series, frame_loc, accession, mrn
+			if self.institution_prefix == 'upenn':
+				try:
+					unique_frame_index = f'{df.SeriesInstanceUID}.{df.InstanceNumber}'
+				except:
+					print('Could not extract InstanceNumber')
+
+				
+			return array, series, frame_loc, accession, mrn, unique_frame_index
 
 		except Exception as ex:
 			print("DICOM corrupted! Skipping...")
@@ -99,6 +111,9 @@ class CMRI_PreProcessor:
 		MRI sequences save each frame as a separate array with it's own metadata. 
 		Function collate_arrays combines each folder of dcm images into a single array
 		Returns reorderd video array, series name, slice frames for multi-slice sequences, total images
+		
+		NOTES: Might be able to do away with natsort entirely if the InstanceNumber dicom tag is consistently available across different institutions. 
+
 		'''
 		if sax_stacked:
 			total_images = 0
@@ -120,6 +135,8 @@ class CMRI_PreProcessor:
 						slice_location.append(dcm_data[2])
 						series = dcm_data[1]
 						mrn = dcm_data[4]
+						#accession = mrn.replace(" ", "")
+						#mrn = folder.split('/')[-2]
 					else:
 						continue
 		else:
@@ -132,19 +149,32 @@ class CMRI_PreProcessor:
 			total_images = len(dcm_list)
 			video_list = []
 			slice_location = []
+			unique_frame_index = []
 			# dcm_list has been sorted by int key if dcm files are simple numbers (essential otherwise it sorts weird as a string)
 			for d in dcm_list:
 				dcm_data = self.dcm_to_array(os.path.join(dcm_subfolder, d))
+
 				if dcm_data is not None:
 					video_list.append(dcm_data[0])
 					slice_location.append(dcm_data[2])
 					series = dcm_data[1]
 					accession = dcm_data[3]
 					mrn = dcm_data[4]
+					unique_frame_index.append(dcm_data[5])
 				else:
 					continue
 
 		try:
+			if self.institution_prefix == "upenn":
+				#NEW
+				tmp_df = pd.DataFrame({'unique_frame_index':unique_frame_index, 'slice_location':slice_location})
+				tmp_df = tmp_df.sort_values(by=['slice_location','unique_frame_index'])
+
+				reordered_index = tmp_df.index.tolist()
+				slice_location = tmp_df['slice_location'].tolist()
+				video_list = [video_list[i] for i in reordered_index]
+
+
 			collated_array = np.array(video_list)
 			slice_frames = np.where(np.array(slice_location)[:-1] != np.array(slice_location)[1:])[0]
 			collated_array = collated_array.transpose(1 , 2 , 3, 0)
@@ -161,12 +191,15 @@ class CMRI_PreProcessor:
 			  Has spaces in mrn, and accessions have a weird format that needs cleaning
 			- MEDSTAR: 
 			  dicom data has blank mrn and accessions, that info is pulled directly from tar filename instead
+			- UPENN:
+			  dicom data is not-anonymized, mrn and accession is taken from anonymized filenames instead
 			'''
+
 			if self.institution_prefix == "ukbiobank":
 				accession = mrn.replace(" ", "")
 				mrn = dcm_subfolder.split('/')[-2]
 			
-			if self.institution_prefix == "medstar":
+			if self.institution_prefix == "medstar" or "upenn":
 				mrn = self.filename.split('-')[0]
 				accession = self.filename.split('-')[1][:-4]
 
@@ -206,6 +239,7 @@ class CMRI_PreProcessor:
 			dset = h5f.create_dataset(series, data=collated_array, dtype='f', compression=self.compression)
 
 			# Attributes
+			#dset.attrs.create('fps', fps, dtype='i')
 			dset.attrs.create('slice_frames', slice_indices, dtype='i')
 			dset.attrs.create('total_images', total_images, dtype='i')
 
@@ -223,11 +257,12 @@ class CMRI_PreProcessor:
 	def ukbiobank_mri_pipeline(self, dcm_directory):
 		'''
 		Handles specific nuances of ukbiobank data
+		NOTE: DO I EVEN NEED THIS ANYMORE???
 		'''
 		sax_files_list = []
-		for dcm_subfolder in os.listdir(dcm_directory):
+		for dcm_subfolder in dcm_directory:
 			dicom_list = os.listdir(dcm_subfolder)
-			df = dcm.dcmread(os.path.join(dcm_subfolder, dicom_list[0]), force=True)
+			df = dcm.dcmread(os.path.join(dcm_subfolder, dicom_list[0]))
 			
 			if "CINE_segmented_SAX" in df.SeriesDescription and "InlineVF" not in df.SeriesDescription:
 				sax_files_list.append(dcm_subfolder)
@@ -257,14 +292,15 @@ class CMRI_PreProcessor:
 
 	def view_disambugator(self, dcm_directory):
 		'''
-		Iterate over multiple subfolders inside dcm_directory for all non-ukbiobank datasets
+		Iterate over multiple subfolders inside dcm_directory for all datasets 
+		This whole thing needs to be smarter than this 
 		'''
 		# Process separated views
 
 		sax_files_list = []
-		for dcm_subfolder in glob.glob(os.path.join(dcm_directory, '*')):
+		for dcm_subfolder in dcm_directory:
 			dicom_list = os.listdir(dcm_subfolder)
-			df = dcm.dcmread(os.path.join(dcm_subfolder, dicom_list[0]), force=True)
+			df = dcm.dcmread(os.path.join(dcm_subfolder, dicom_list[0]))
 
 			# MEDSTAR
 			if self.institution_prefix == 'medstar':
@@ -312,7 +348,7 @@ class CMRI_PreProcessor:
 
 		# OTHER HOSPITALS
 		else:
-			for dcm_subfolder in glob.glob(os.path.join(dcm_directory, '*')):
+			for dcm_subfolder in dcm_directory:
 				if len(glob.glob(os.path.join(dcm_subfolder, '*'))) > 1:
 					collated_array = self.collate_arrays(dcm_subfolder) 
 					
@@ -342,7 +378,7 @@ class CMRI_PreProcessor:
 		dcm_directory = glob.glob(os.path.join(tar_extract_path, '*', '*'))
 
 		# Handles separate pipelines based on data source
-		self.view_disambugator(dcm_directory[0])
+		self.view_disambugator(dcm_directory)
 
 		# Clean up after to save space  
 		try:
@@ -501,5 +537,7 @@ if __name__ == '__main__':
 		p.close()
 		p.join()
 
-		print(f'Elapsed time: {round((time.time() - start_time), 2)}')
+		print('------------------------------------')
+		print(f'Elapsed time: {round((time.time() - start_time), 2)}s')
+		print('------------------------------------')
 

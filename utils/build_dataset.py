@@ -1,6 +1,6 @@
 '''
-Reads in master hdf5 storage that is the output of preprocess_mri.py and builds view-specific hdf5 datasets 
-for faster train-time performance. Uses the same csv safelist method of generating specific datasets if needed 
+Reads in master hdf5 storage and builds view-specific hdf5 datasets for faster train-time performance
+Uses the same csv safelist method of generating specific datasets if needed 
 
 Input hdf5 dataset format:
 stanford_RF3da3244
@@ -10,7 +10,10 @@ stanford_RF3da3244
 	├── SAX_FIESTA_BH_1			{data: 4d array} {attr: fps, total images, slice frame index}
 	├── SAX_FIESTA_BH_2			{data: 4d array} {attr: fps, total images, slice frame index}
 	├── STACK_LV3CH_FIESTA_BH 	{data: 4d array} {attr: fps, total images, slice frame index}
-	
+	├── report.txt 				{data: str? - this will contain PHI so might want to tokenize while loading data}
+	├── measurements.json		{data: coordinates}
+	├── bounding_box.json 		{data: coordinates}
+	├── metadata.json		
 
 Output hdf4 format:
 stanford_RF3da3244
@@ -19,6 +22,7 @@ stanford_RF3da3244
 	├── 4CH 		{data: 4d array} {attr: fps, total images}
 	├── SAX			{data: 4d array} {attr: fps, total images, slice frame index}
 	├── 3CH			{data: 4d array} {attr: fps, total images}
+
 
 '''
 
@@ -36,6 +40,7 @@ import argparse as ap
 import matplotlib 
 import h5py
 import random
+#from torchvideotransforms import video_transforms, volume_transforms 
 import matplotlib.pyplot as plt
 import time
 

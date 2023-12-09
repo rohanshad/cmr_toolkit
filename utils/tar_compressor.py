@@ -1,6 +1,5 @@
 '''
 Dumb tar compressor utilitiy
-This is a workaround because I don't want to make extensive edits to preprocess_mri.py to deal with non-tar compressed dicoms
 '''
 
 import tarfile
@@ -15,10 +14,15 @@ import shutil
 import bcolors
 
 from pyaml_env import BaseConfig, parse_config
+import platform
+
 
 # Read local_config.yaml for local variables 
 cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
-TMP_DIR = cfg.tmp_dir
+device = platform.uname().node.replace('-','_')
+if 'sh' in device:
+	device = 'sherlock'
+TMP_DIR = getattr(cfg, device).tmp_dir
 
 def csv_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''
@@ -101,7 +105,7 @@ def nl_tarcompress(root_dir, filename, output_dir):
 	'''
 
 	dicom_list = glob.glob(os.path.join(root_dir, filename, '*', '*'))
-	
+
 	counter = 0
 	for i in dicom_list:	
 		try:
@@ -157,7 +161,7 @@ if __name__ == '__main__':
 	start_time = time.time()
 	filenames = os.listdir(root_dir)
 	filenames = [i for i in filenames if i[0] != "."]
-
+	
 	if mode == 'simple':
 		'''
 		Use this to just tar compress preserving dicom folder name 

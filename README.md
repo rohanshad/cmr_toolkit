@@ -1,6 +1,6 @@
-# Hiesinger Lab cMRI tools
+# Cardiac MRI Toolkit (alpha)
 
-A set of preprocessing utilities for cardiac MRI studies.
+A set of preprocessing utilities for cardiac MRI studies to make deep learning projects less painful
 ![summary_usage](https://github.com/rohanshad/cmr_toolkit/blob/5b6055dc059aeccb50bd78d106be4b88eccabe31/media/summary_usage.png)
 
 1. Scripts to convert cardiac-mri dicom files to hdf5 filestores
@@ -15,25 +15,25 @@ A set of preprocessing utilities for cardiac MRI studies.
 Scripts are all built to scale almost linearly to about 64 CPU cores for speed. Can process up to 100k MRI scans in less than 3 hours on 64 CPU cores.
 
 ```
-stanford_RF3da3244
-	├── RF3da3581.h5
-	├── RF3lv2173.h5
-		├── 4CH_FIESTA_BH 			{data: 4d array} {attr: fps, total images}
-		├── SAX_FIESTA_BH_1			{data: 4d array} {attr: fps, total images, slice frame index}
-		├── SAX_FIESTA_BH_2			{data: 4d array} {attr: fps, total images, slice frame index}
-		├── STACK_LV3CH_FIESTA_BH 	{data: 4d array} {attr: fps, total images, slice frame index}
+upenn_Zx3da3244
+├── Zx3da3581.h5
+├── Gf3lv2173.h5
+	├── 4CH_FIESTA_BH 		{data: 4d array} {attr: fps, total images}
+	├── SAX_FIESTA_BH_1		{data: 4d array} {attr: fps, total images, slice frame index}
+	├── SAX_FIESTA_BH_2		{data: 4d array} {attr: fps, total images, slice frame index}
+	├── STACK_LV3CH_FIESTA_BH	{data: 4d array} {attr: fps, total images, slice frame index}
 	
 ```
 
 ```build_dataset.py``` builds a copy of the hdf5 filestore above with standardized names for different views. The names are pulled from a separate csv file ```series_descriptions_master.csv```. This contains standard names for a large list of ```SeriesDescription``` tags seen in US based DICOM studies from Phillips, GE, and Siemens scanners. The filestores have the following structure thereafter, where the name of the datasets within the hdf5 files are now standardized series names (4CH, 2CH, 3CH, SAX). Feel free to extend the code to capture LGE / T1 / T2 whatever.
 
 ```
-stanford_RF3da3244
-	├── RF3da3581.h5
-	├── RF3lv2173.h5
-		├── 4CH 		{data: 4d array} {attr: fps, total images}
-		├── SAX			{data: 4d array} {attr: fps, total images, slice frame index}
-		├── 3CH			{data: 4d array} {attr: fps, total images}
+upenn_Zx3da3244
+├── Zx3da3581.h5
+├── Gf3lv2173.h5
+		├── 4CH 	{data: 4d array} {attr: fps, total images}
+		├── SAX		{data: 4d array} {attr: fps, total images, slice frame index}
+		├── 3CH		{data: 4d array} {attr: fps, total images}
 ```
 
 Chances are SeriesDescription tags from your dataset are not available in the ```series_descriptions_master.csv``` file I have provided. To build your own one specific to your institution, run ```dicom_metadata.py``` to process all your dicoms. You can then add the 'cleaned_series_name' manually in MS Excel or whatever manually. The 'counts' column is a good way of verifying you're capturing the most commonly occuring studies in your dataset. 
@@ -47,3 +47,7 @@ tmp_dir: 'tmp/dir/on_some_server'
 bucket_name: unique_googlecloud_bucket
 some_other_variable: 'local/folder/tree'
 ```
+
+### Future Directions
+
+Replace the mastersheet based approach with deep learning view recognition combined with simple heuristics for accurate view, sequence, and phase detection. Initial experiments show promising results. 

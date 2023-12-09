@@ -14,18 +14,19 @@ import glob
 import imageio
 import imageio_ffmpeg 
 import subprocess
-
+import platform
 from pyaml_env import BaseConfig, parse_config
 
 # Read local_config.yaml for local variables 
-cfg = BaseConfig(parse_config('../local_config.yaml'))
-TMP_DIR = cfg.tmp_dir
-BUCKET_NAME = cfg.bucket_name
+cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
+device = platform.uname().node.replace('-','_')
+TMP_DIR =  getattr(cfg, device).tmp_dir
+BUCKET_NAME =  cfg.global_settings.bucket_name
 
 def generate_video_mp4(array, view, root_dir, input_hdf5, output_directory):
 	'''
 	Generates a mp4 video from input arrays using ffmpeg
-	Retains magma color scheme because it looks dope, but might want to use b/w instead
+	Retains magma color scheme because it looks dope
 	'''
 	
 	save_dir = os.path.join(root_dir, 'tmp', os.path.basename(input_hdf5[:-3])+'_pngs')
@@ -209,9 +210,10 @@ if __name__ == '__main__':
 
 	elif mode == 'sequence':
 		random_file = random.choice(file_list_final)
+		print('Plotting', view_name, 'for', random_file)
 
 		# Plots a long sequence of images for cardiac cycle
-		plot_study_sequence(hdf5_to_array(random_file, view_name), skip_period = 4)
+		plot_study_sequence(hdf5_to_array(random_file, view_name), skip_period = 3)
 
 	elif mode == 'slices':
 		random_file = random.choice(file_list_final)
