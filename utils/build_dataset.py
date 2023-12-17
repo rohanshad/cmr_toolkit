@@ -10,20 +10,14 @@ stanford_RF3da3244
 	├── SAX_FIESTA_BH_1			{data: 4d array} {attr: fps, total images, slice frame index}
 	├── SAX_FIESTA_BH_2			{data: 4d array} {attr: fps, total images, slice frame index}
 	├── STACK_LV3CH_FIESTA_BH 	{data: 4d array} {attr: fps, total images, slice frame index}
-	├── report.txt 				{data: str? - this will contain PHI so might want to tokenize while loading data}
-	├── measurements.json		{data: coordinates}
-	├── bounding_box.json 		{data: coordinates}
-	├── metadata.json		
 
-Output hdf4 format:
+Output hdf5 format:
 stanford_RF3da3244
 ├── RF3da3581.h5
 ├── RF3lv2173.h5
 	├── 4CH 		{data: 4d array} {attr: fps, total images}
 	├── SAX			{data: 4d array} {attr: fps, total images, slice frame index}
 	├── 3CH			{data: 4d array} {attr: fps, total images}
-
-
 '''
 
 import os
@@ -40,7 +34,6 @@ import argparse as ap
 import matplotlib 
 import h5py
 import random
-#from torchvideotransforms import video_transforms, volume_transforms 
 import matplotlib.pyplot as plt
 import time
 

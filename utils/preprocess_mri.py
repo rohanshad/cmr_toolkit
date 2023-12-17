@@ -74,8 +74,6 @@ class CMRI_PreProcessor:
 			accession = df.AccessionNumber  
 			mrn = df.PatientID 
 
-			# TODO:
-			### len==3 section probably buggy af since at this point its all images not video ###
 			if len(df.pixel_array.shape) == 3: 
 				# f, w, h, c
 				frames = df.pixel_array.shape[0]
@@ -257,7 +255,7 @@ class CMRI_PreProcessor:
 	def ukbiobank_mri_pipeline(self, dcm_directory):
 		'''
 		Handles specific nuances of ukbiobank data
-		NOTE: DO I EVEN NEED THIS ANYMORE???
+		NOTE: POTENTIALLY DEPRECATE THIS
 		'''
 		sax_files_list = []
 		for dcm_subfolder in dcm_directory:
@@ -293,7 +291,6 @@ class CMRI_PreProcessor:
 	def view_disambugator(self, dcm_directory):
 		'''
 		Iterate over multiple subfolders inside dcm_directory for all datasets 
-		This whole thing needs to be smarter than this 
 		'''
 		# Process separated views
 
