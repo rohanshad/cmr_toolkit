@@ -1,5 +1,6 @@
 '''
 Dumb tar compressor utilitiy
+This is a workaround because I don't want to make extensive edits to preprocess_video.py
 '''
 
 import tarfile
@@ -17,6 +18,7 @@ from pyaml_env import BaseConfig, parse_config
 import platform
 
 
+
 # Read local_config.yaml for local variables 
 cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
 device = platform.uname().node.replace('-','_')
@@ -30,23 +32,27 @@ def csv_tarcompress(root_dir, filename, output_dir, csv_reference):
 	Then compresses folders into tarfiles
 	'''
 
-	ref_data = pd.read_csv(csv_reference)
+	ref_data = pd.read_csv(csv_reference).dropna().reset_index()
 	dicom_list = glob.glob(os.path.join(root_dir, filename,'*','*'))
 
 	try:
 		df = dcm.dcmread(dicom_list[1])
-
 		# Check if any dicoms have non greyscale 
 		df.PhotometricInterpretation = 'MONOCHROME2'
 
-		# Save Study Instance ID 
-		study_id = df.StudyInstanceUID  
-		if study_id in ref_data['study_instance_uid'].to_string():
-			mrn =  ref_data.loc[ref_data['study_instance_uid'] == study_id, 'anon_mrn'].values[0]
-			accession = ref_data.loc[ref_data['study_instance_uid'] == study_id, 'accession'].values[0]
-			print(f'Processing: {mrn}-{accession}')
+		# Process only if Accession Number is in crosswalk file
+		accession = df.AccessionNumber  
+		mrn = df.PatientID
+
+		# Possibility of MRN not being in crosswalk, but accession # will always match
+
+		if accession in ref_data['accession'].to_string():
+			mrn =  ref_data.loc[ref_data['accession'].astype(int).astype(str) == accession, 'anon_mrn'].values[0]
+			accession = ref_data.loc[ref_data['accession'].astype(int).astype(str) == accession, 'anon_accession'].values[0]
+			print(f'{bcolors.OK}Processing: {mrn}-{accession}{bcolors.END}')
 		else:
 			pass
+			print(f'{bcolors.ERR}No matching scan data in crosswalk for acc: {accession}{bcolors.END}')
 
 		# Dump entire thing as a tarfile with anonymized mrn as basename
 		folder_name = os.path.join(root_dir, filename)
@@ -87,6 +93,49 @@ def dcm_tarcompress(root_dir, filename, output_dir):
 	except:
 	 	print("DICOM corrupted! Skipping...")
 
+def dcm_rewrite_originals_tarcompress(root_dir, filename, output_dir):
+	'''
+	First reads dcm files and renames the filename to this 
+	Then compresses folders into tarfiles
+	'''
+
+	dicom_list = glob.glob(os.path.join(root_dir,filename,'*','*'))
+
+	for dcm_file in dicom_list:
+		df = dcm.dcmread(dcm_file)
+		# Check if any dicoms have non greyscale 
+		df.PhotometricInterpretation = 'MONOCHROME2'
+		df.AccessionNumber = 'scandata'	
+
+		df.is_little_endian = True
+		df.is_implicit_VR = True
+
+		df.save_as(dcm_file, write_like_original=False)	
+
+	print(f'Reset AccessionNumbers for {filename}')	
+
+	try:
+		#print(dicom_list[1])
+		df = dcm.dcmread(dicom_list[1])
+
+
+		# Check if any dicoms have non greyscale 
+		df.PhotometricInterpretation = 'MONOCHROME2'
+
+		# Save series name + frame location 
+		accession = df.AccessionNumber  
+		mrn = df.PatientID 
+		print('Processing:', mrn+'-'+accession)
+
+		# Dump entire thing as a tarfile with anonymized mrn as basename
+		folder_name = os.path.join(root_dir, filename)
+		tar = tarfile.open(os.path.join(output_dir, mrn+'-'+accession+'.tgz'), "w:gz")
+		tar.add(folder_name, arcname=filename)
+		tar.close()
+
+	except:
+	 	print("DICOM corrupted! Skipping...")
+
 
 def simple_tarcompress(root_dir, filename, output_dir):
 	'''
@@ -99,13 +148,12 @@ def simple_tarcompress(root_dir, filename, output_dir):
 	tar.close()
 
 
-def nl_tarcompress(root_dir, filename, output_dir):
+def nofolder_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''
-	Deals with dicom folders without any subfolder strcuture for seriesdescription
+	Deals with dicom folders without any subfolder structure for seriesdescription
 	'''
 
-	dicom_list = glob.glob(os.path.join(root_dir, filename, '*', '*'))
-
+	dicom_list = glob.glob(os.path.join(root_dir, filename, '*'))
 	counter = 0
 	for i in dicom_list:	
 		try:
@@ -114,19 +162,20 @@ def nl_tarcompress(root_dir, filename, output_dir):
 
 			dicom_basename = os.path.split(i)[1]
 			accession_number = os.path.split(os.path.split(i)[0])[1]
-
-			os.makedirs(os.path.join(TMP_DIR, filename, accession_number, series_description), exist_ok=True)
-			shutil.copy(i, os.path.join(TMP_DIR, filename, accession_number, series_description, dicom_basename))
+			series_description = series_description.replace(' ','_').replace('/','_')
+			os.makedirs(os.path.join(TMP_DIR, filename, series_description), exist_ok=True)
+			shutil.copy(i, os.path.join(TMP_DIR, filename, series_description, dicom_basename))
 			counter = counter + 1
+
 		except Exception as ex:
 			print(f'Error code: {ex}')
 			print(f'DICOM corrupted! Skipping...')
 
 	# Final compression
-	simple_tarcompress(TMP_DIR, filename, output_dir)
+	#csv_tarcompress(TMP_DIR, filename, output_dir, csv_reference)
+	dcm_tarcompress(TMP_DIR, filename, output_dir)
 	shutil.rmtree(os.path.join(TMP_DIR, filename))
-	print(f'{bcolors.OK}Successfully exported {counter} dicom files to tar{bcolors.END}')
-
+	print(f'Successfully exported {counter} dicom files to tar')
 
 
 if __name__ == '__main__':
@@ -161,22 +210,17 @@ if __name__ == '__main__':
 	start_time = time.time()
 	filenames = os.listdir(root_dir)
 	filenames = [i for i in filenames if i[0] != "."]
-	
+
+
 	if mode == 'simple':
-		'''
-		Use this to just tar compress preserving dicom folder name 
-		'''
 		for f in filenames:
 			if cpus > 1:
 				p.apply_async(simple_tarcompress, [root_dir, f, output_dir])
 			else:
 				simple_tarcompress(root_dir, f, output_dir)
 
+
 	elif mode == 'dicom':
-		'''
-		Use if reading MRN and Accession numbers from dicom files and using them directly 
-		(Assumes your files are anonymized, please for the love of god don't do this if they aren't)
-		'''
 		for f in filenames:
 			if cpus > 1:
 				p.apply_async(dcm_tarcompress, [root_dir, f, output_dir])
@@ -184,23 +228,26 @@ if __name__ == '__main__':
 				dcm_tarcompress(root_dir, f, output_dir)
 
 	elif mode == 'anonymize':
-		'''
-		Use to read MRN and Accession numbers from dicom files and anonymize them based on a provided crosswalk to provide
-		anon-MRN and anon-accession numbers. Crosswalk is provided via --csv_ref flag
-		'''
 		for f in filenames:
 			if cpus > 1:
 				p.apply_async(csv_tarcompress, [root_dir, f, output_dir, csv_reference])
 			else:
 				csv_tarcompress(root_dir, f, output_dir, csv_reference)
 
-	elif mode == 'nl_tarcompress':
+	elif mode == 'reset_dicom_meta':
+		for f in filenames:
+			if cpus > 1:
+				p.apply_async(dcm_rewrite_originals_tarcompress, [root_dir, f, output_dir])
+			else:
+				dcm_rewrite_originals_tarcompress(root_dir, f, output_dir)
+
+	elif mode == 'penn_tarcompress':
 
 		for f in filenames:
 			if cpus > 1:
-				p.apply_async(nl_tarcompress, [root_dir, f, output_dir])
+				p.apply_async(nofolder_tarcompress, [root_dir, f, output_dir, csv_reference])
 			else:
-				nl_tarcompress(root_dir, f, output_dir)	
+				nofolder_tarcompress(root_dir, f, output_dir, csv_reference)	
 
 	p.close()
 	p.join()
