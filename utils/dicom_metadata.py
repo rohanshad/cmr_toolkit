@@ -27,6 +27,8 @@ device = platform.uname().node.replace('-','_')
 cfg = BaseConfig(parse_config(Path(__file__).parent.resolve().parent.joinpath('local_config.yaml')))
 if 'sh' in device:
 	device = 'sherlock'
+elif '211' in device:
+	device = 'cubic'
 ATTN_DIR = getattr(cfg, device).attn_dir
 TMP_DIR = getattr(cfg, device).tmp_dir
 

@@ -28,13 +28,16 @@ import random
 from torchvideotransforms import video_transforms, volume_transforms 
 import matplotlib.pyplot as plt
 import time
-from natsort import natsorted
+from natsort import natsorted, natsort_keygen
 import platform
+import pylibjpeg
 from pyaml_env import BaseConfig, parse_config
 
 # Read local_config.yaml for local variables 
+
 device = platform.uname().node.replace('-','_')
 cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
+
 if 'sh' in device:
 	device = 'sherlock'
 elif '211' in device:
@@ -89,12 +92,12 @@ class CMRI_PreProcessor:
 			else:
 				# Placeholder empty frame so things don't break
 				print('Invalid dimensions')
-
-			if self.institution_prefix == 'upenn':
-				try:
-					unique_frame_index = f'{df.SeriesInstanceUID}.{df.InstanceNumber}'
-				except:
-					print('Could not extract InstanceNumber')
+		
+			try:
+				unique_frame_index = f'{df.InstanceNumber}'
+			except:
+				print('Could not extract InstanceNumber')
+				unique_frame_index = None
 
 				
 			return array, series, frame_loc, accession, mrn, unique_frame_index
@@ -120,12 +123,9 @@ class CMRI_PreProcessor:
 			# For ukbiobank SAX the 'dcm_subfolder' is a list of 'dcm_subfolders'
 			for folder in dcm_subfolder:
 				dcm_list = os.listdir(folder)
-				try:
-					dcm_list.natsorted()
-				except:
-					print('WARNING: Potential sorting error for SAX files')
-					dcm_list.sort()
 				total_images += len(dcm_list)
+
+				# dcm_list is completely unsorted
 				for d in dcm_list:
 					dcm_data = self.dcm_to_array(os.path.join(folder, d))
 					if dcm_data is not None:
@@ -139,16 +139,12 @@ class CMRI_PreProcessor:
 						continue
 		else:
 			dcm_list = os.listdir(dcm_subfolder)
-			try:
-				dcm_list = natsorted(dcm_list)
-			except:
-				print('WARNING: Potential sorting error for SAX files')
-				dcm_list.sort()
 			total_images = len(dcm_list)
 			video_list = []
 			slice_location = []
 			unique_frame_index = []
-			# dcm_list has been sorted by int key if dcm files are simple numbers (essential otherwise it sorts weird as a string)
+
+			# dcm_list is completely unsorted
 			for d in dcm_list:
 				dcm_data = self.dcm_to_array(os.path.join(dcm_subfolder, d))
 
@@ -163,14 +159,13 @@ class CMRI_PreProcessor:
 					continue
 
 		try:
-			if self.institution_prefix == "upenn":
-				#NEW
-				tmp_df = pd.DataFrame({'unique_frame_index':unique_frame_index, 'slice_location':slice_location})
-				tmp_df = tmp_df.sort_values(by=['slice_location','unique_frame_index'])
-
-				reordered_index = tmp_df.index.tolist()
-				slice_location = tmp_df['slice_location'].tolist()
-				video_list = [video_list[i] for i in reordered_index]
+			#NEW
+			tmp_df = pd.DataFrame({'unique_frame_index':unique_frame_index, 'slice_location':slice_location})
+			tmp_df = tmp_df.sort_values(by=['slice_location','unique_frame_index'], key=natsort_keygen())
+			
+			reordered_index = tmp_df.index.tolist()
+			slice_location = tmp_df['slice_location'].tolist()
+			video_list = [video_list[i] for i in reordered_index]
 
 
 			collated_array = np.array(video_list)
@@ -193,11 +188,12 @@ class CMRI_PreProcessor:
 			  dicom data is not-anonymized, mrn and accession is taken from anonymized filenames instead
 			'''
 
+
 			if self.institution_prefix == "ukbiobank":
 				accession = mrn.replace(" ", "")
 				mrn = dcm_subfolder.split('/')[-2]
-			
-			if self.institution_prefix == "medstar" or "upenn":
+
+			if self.institution_prefix == "medstar" or self.institution_prefix == "upenn":
 				mrn = self.filename.split('-')[0]
 				accession = self.filename.split('-')[1][:-4]
 
@@ -251,42 +247,6 @@ class CMRI_PreProcessor:
 
 		h5f.close()
 
-
-	def ukbiobank_mri_pipeline(self, dcm_directory):
-		'''
-		Handles specific nuances of ukbiobank data
-		NOTE: POTENTIALLY DEPRECATE THIS
-		'''
-		sax_files_list = []
-		for dcm_subfolder in dcm_directory:
-			dicom_list = os.listdir(dcm_subfolder)
-			df = dcm.dcmread(os.path.join(dcm_subfolder, dicom_list[0]))
-			
-			if "CINE_segmented_SAX" in df.SeriesDescription and "InlineVF" not in df.SeriesDescription:
-				sax_files_list.append(dcm_subfolder)
-				print(f'Stacking {df.SeriesDescription}')
-
-			# Process non SAX ukbiobank studies
-			else:
-				if "InlineVF" in df.SeriesDescription:
-					print('Skipping scan with random overlay...')
-				else:
-					if len(glob.glob(os.path.join(dcm_subfolder, '*'))) > 1:
-						collated_array = self.collate_arrays(dcm_subfolder, sax_stacked=False)  
-
-					if collated_array is not None:
-						self.array_to_h5(*(collated_array))
-
-		# Process ukbiobank SAX subfolders all as a single stack after reordering 
-		if len(sax_files_list) > 0:	
-			sax_files_list.sort(key=lambda x: dcm.dcmread(os.path.join(x,os.listdir(x)[0])).SliceLocation, reverse=True)
-			
-			# opencv limitation where resize operation can only take place on less than 512 frames at a time, hard code to maximum of 10 slices (500 frames)
-			print(f'{len(sax_files_list[0:10])} SAX slices to export...')
-			collated_array = self.collate_arrays(sax_files_list[0:10], sax_stacked=True)
-
-			if collated_array is not None:
-				self.array_to_h5(*(collated_array))
 
 	def view_disambugator(self, dcm_directory):
 		'''
