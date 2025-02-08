@@ -112,9 +112,7 @@ class CMRI_PreProcessor:
 		MRI sequences save each frame as a separate array with it's own metadata. 
 		Function collate_arrays combines each folder of dcm images into a single array
 		Returns reorderd video array, series name, slice frames for multi-slice sequences, total images
-		
-		NOTES: Might be able to do away with natsort entirely if the InstanceNumber dicom tag is consistently available across different institutions. 
-
+		Uses InstanceNumber to figure out order of frames in videos / sequences
 		'''
 		if sax_stacked:
 			total_images = 0
@@ -351,7 +349,7 @@ if __name__ == '__main__':
 
 	parser = ap.ArgumentParser(
 		description="Preprocess dicom to hdf5 v0.1",
-		epilog="Version 0.1; Created by Rohan Shad, MD"
+		epilog="Version 2.0; Created by Rohan Shad, MD"
 	)
 
 	parser.add_argument('-r', '--root_dir', metavar='', required=False, help='Full path to root directory', default='/Users/rohanshad/PHI Safe/test_mri_downloads')
