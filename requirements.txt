@@ -46,10 +46,8 @@ fire==0.4.0
 formulaic==0.2.3
 fsspec==2022.11.0
 future==0.18.2
-fvcore==0.1.5.post20210923
 gitdb==4.0.9
 GitPython==3.1.24
-Glances==3.4.0.3
 google-api-core==2.11.0
 google-auth==2.16.2
 google-auth-oauthlib==0.4.2
@@ -132,10 +130,6 @@ pyrsistent==0.19.3
 pytest==6.2.2
 python-dateutil==2.8.2
 python-stdnum==1.18
-pytorch-crf==0.7.0
-pytorch-lightning==1.8.6
-pytorch-nlp==0.5.0
-pytorchvideo==0.1.3
 pytube==10.8.4
 pytz==2023.3
 pytz-deprecation-shim==0.1.0.post0
@@ -179,12 +173,6 @@ tifffile==2021.2.1
 tokenizers==0.10.1
 toml==0.10.2
 toolz==0.11.1
-torchmetrics==1.0.1
-torchsummary==1.5.1
-torchtext==0.4.0
-torchtuples==0.2.0
-git+https://github.com/hassony2/torch_videovision@785a810d1df2ccab6901fb98b38e358433e7b17a
-torchvision==0.10.1
 tqdm==4.65.0
 typer==0.3.2
 typing_extensions==4.5.0
@@ -209,9 +197,7 @@ yarl==1.6.3
 yaspin==2.1.0
 zipp==3.15.0
 matplotlib==3.3.4
-transformers==4.6.0
 numpy==1.25
 protobuf==3.20.1
 python-gdcm==3.0.24.1
 pylibjpeg==2.0.1
-torch==1.11.0+cu113 --extra-index-url https://download.pytorch.org/whl/cu113

@@ -20,11 +20,15 @@ import platform
 
 
 # Read local_config.yaml for local variables 
-cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
 device = platform.uname().node.replace('-','_')
+cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
+
 if 'sh' in device:
 	device = 'sherlock'
-TMP_DIR = getattr(cfg, device).tmp_dir
+elif '211' in device or 'cubic' in device:
+	device = 'cubic'
+TMP_DIR =  getattr(cfg, device).tmp_dir
+BUCKET_NAME =  cfg.global_settings.bucket_name
 
 def csv_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''
@@ -172,8 +176,10 @@ def nofolder_tarcompress(root_dir, filename, output_dir, csv_reference):
 			print(f'DICOM corrupted! Skipping...')
 
 	# Final compression
-	#csv_tarcompress(TMP_DIR, filename, output_dir, csv_reference)
-	dcm_tarcompress(TMP_DIR, filename, output_dir)
+	if csv_reference is not None:
+		csv_tarcompress(TMP_DIR, filename, output_dir, csv_reference)
+	else:
+		dcm_tarcompress(TMP_DIR, filename, output_dir)
 	shutil.rmtree(os.path.join(TMP_DIR, filename))
 	print(f'Successfully exported {counter} dicom files to tar')
 

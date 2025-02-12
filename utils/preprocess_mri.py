@@ -42,7 +42,6 @@ if 'sh' in device:
 	device = 'sherlock'
 elif '211' in device:
 	device = 'cubic'
-device = platform.uname().node.replace('-','_')
 TMP_DIR =  getattr(cfg, device).tmp_dir
 BUCKET_NAME =  cfg.global_settings.bucket_name
 
