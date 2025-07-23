@@ -32,9 +32,11 @@ from natsort import natsorted, natsort_keygen
 import platform
 import pylibjpeg
 from pyaml_env import BaseConfig, parse_config
+from slack_bolt import App
+from slack_bolt.adapter.socket_mode import SocketModeHandler
+
 
 # Read local_config.yaml for local variables 
-
 device = platform.uname().node.replace('-','_')
 cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
 
@@ -45,6 +47,24 @@ elif '211' in device:
 TMP_DIR =  getattr(cfg, device).tmp_dir
 BUCKET_NAME =  cfg.global_settings.bucket_name
 
+
+### Global Functions ###
+
+def notify_slack(message: str):
+	'''
+	Notifier function for Slack APP cmr_bot 
+	'''
+	try:
+		slack_bot_token = os.getenv("SLACK_CMR_BOT_TOKEN")
+		cmr_bot_channel = os.getenv("CMR_BOT_CHANNEL")
+		app = App(token=slack_bot_token)
+		app.client.chat_postMessage(channel=cmr_bot_channel, text=f"{message}")
+		
+	except Exception as ex:
+		print(f'WARN: cmr_bot not configured, skipping...')
+		print(ex)
+
+	
 
 class CMRI_PreProcessor:
 	'''
@@ -86,6 +106,7 @@ class CMRI_PreProcessor:
 				array = np.repeat(gray[None,...],self.channels,axis=0)
 
 			elif len(df.pixel_array.shape) == 2:
+				# NO RGB conversion here? #
 				array = np.repeat(df.pixel_array[None,...],self.channels,axis=0)
 
 			else:
@@ -163,9 +184,11 @@ class CMRI_PreProcessor:
 			reordered_index = tmp_df.index.tolist()
 			slice_location = tmp_df['slice_location'].tolist()
 			video_list = [video_list[i] for i in reordered_index]
-
-
 			collated_array = np.array(video_list)
+
+			# Debug lines
+			print(f'{series}: {collated_array.shape}')
+			
 			slice_frames = np.where(np.array(slice_location)[:-1] != np.array(slice_location)[1:])[0]
 			collated_array = collated_array.transpose(1 , 2 , 3, 0)
 			video_transform_list = [video_transforms.Resize(self.framesize), video_transforms.CenterCrop(round(0.75*self.framesize))]
@@ -264,13 +287,13 @@ class CMRI_PreProcessor:
 					print(f'Stacking {df.SeriesDescription}')
 
 				else:
-					if len(glob.glob(os.path.join(dcm_subfolder, '*'))) > 1:
+					if len(glob.glob(os.path.join(dcm_subfolder, '*'))) >= 1:
 						collated_array = self.collate_arrays(dcm_subfolder, sax_stacked=False)  
 
 						if collated_array is not None:
 							self.array_to_h5(*(collated_array))
 					else:
-						print('Skipped single image series')
+						print('Failed processing')
 
 			# UKBIOBANK
 			if self.institution_prefix == 'ukbiobank':
@@ -282,13 +305,13 @@ class CMRI_PreProcessor:
 					if "InlineVF" in df.SeriesDescription:
 						print('Skipping scan with random overlay...')
 					else:
-						if len(glob.glob(os.path.join(dcm_subfolder, '*'))) > 1:
+						if len(glob.glob(os.path.join(dcm_subfolder, '*'))) >= 1:
 							collated_array = self.collate_arrays(dcm_subfolder, sax_stacked=False)  
 
 							if collated_array is not None:
 								self.array_to_h5(*(collated_array))
 						else:
-							print('Skipped single image series')
+							print('Failed processing')
 
 		if len(sax_files_list) > 0:
 			sax_files_list.sort(key=lambda x: dcm.dcmread(os.path.join(x,os.listdir(x)[0])).SliceLocation, reverse=True)
@@ -303,7 +326,7 @@ class CMRI_PreProcessor:
 		# OTHER HOSPITALS
 		else:
 			for dcm_subfolder in dcm_directory:
-				if len(glob.glob(os.path.join(dcm_subfolder, '*'))) > 1:
+				if len(glob.glob(os.path.join(dcm_subfolder, '*'))) >= 1:
 					collated_array = self.collate_arrays(dcm_subfolder) 
 					
 					if collated_array is not None:
@@ -311,7 +334,7 @@ class CMRI_PreProcessor:
 					else:
 						continue
 				else:
-					print('Skipped single image series')
+					print('Failed processing')
 
 
 	def process_dicoms(self, filename):
@@ -494,4 +517,8 @@ if __name__ == '__main__':
 		print('------------------------------------')
 		print(f'Elapsed time: {round((time.time() - start_time), 2)}s')
 		print('------------------------------------')
+
+		# Notification via Slack
+		notify_slack(f"preprocess_mri.py job status: complete. \nTotal time: {round((time.time() - start_time), 2)}s")
+
 
