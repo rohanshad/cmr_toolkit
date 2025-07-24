@@ -41,3 +41,4 @@ tzdata==2025.2
 wheel==0.45.1
 python-gdcm==3.0.26
 slack-bolt==1.23.0
+python-dotenv==1.1.1

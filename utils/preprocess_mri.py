@@ -34,9 +34,11 @@ import pylibjpeg
 from pyaml_env import BaseConfig, parse_config
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+from dotenv import load_dotenv
 
 
-# Read local_config.yaml for local variables 
+# Read local_config.yaml and .env for local variables 
+load_dotenv()
 device = platform.uname().node.replace('-','_')
 cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
 
@@ -56,7 +58,7 @@ def notify_slack(message: str):
 	'''
 	try:
 		slack_bot_token = os.getenv("SLACK_CMR_BOT_TOKEN")
-		cmr_bot_channel = os.getenv("CMR_BOT_CHANNEL")
+		cmr_bot_channel = os.getenv("CHANNEL")
 		app = App(token=slack_bot_token)
 		app.client.chat_postMessage(channel=cmr_bot_channel, text=f"{message}")
 		
@@ -64,7 +66,6 @@ def notify_slack(message: str):
 		print(f'WARN: cmr_bot not configured, skipping...')
 		print(ex)
 
-	
 
 class CMRI_PreProcessor:
 	'''
@@ -106,7 +107,6 @@ class CMRI_PreProcessor:
 				array = np.repeat(gray[None,...],self.channels,axis=0)
 
 			elif len(df.pixel_array.shape) == 2:
-				# NO RGB conversion here? #
 				array = np.repeat(df.pixel_array[None,...],self.channels,axis=0)
 
 			else:
@@ -138,6 +138,8 @@ class CMRI_PreProcessor:
 			total_images = 0
 			video_list = []
 			slice_location = []
+			unique_frame_index = []
+
 			# For ukbiobank SAX the 'dcm_subfolder' is a list of 'dcm_subfolders'
 			for folder in dcm_subfolder:
 				dcm_list = os.listdir(folder)
@@ -151,8 +153,7 @@ class CMRI_PreProcessor:
 						slice_location.append(dcm_data[2])
 						series = dcm_data[1]
 						mrn = dcm_data[4]
-						#accession = mrn.replace(" ", "")
-						#mrn = folder.split('/')[-2]
+						unique_frame_index.append(dcm_data[5])
 					else:
 						continue
 		else:
@@ -186,7 +187,7 @@ class CMRI_PreProcessor:
 			video_list = [video_list[i] for i in reordered_index]
 			collated_array = np.array(video_list)
 
-			# Debug lines
+			# TMP debug lines
 			print(f'{series}: {collated_array.shape}')
 			
 			slice_frames = np.where(np.array(slice_location)[:-1] != np.array(slice_location)[1:])[0]
@@ -194,6 +195,7 @@ class CMRI_PreProcessor:
 			video_transform_list = [video_transforms.Resize(self.framesize), video_transforms.CenterCrop(round(0.75*self.framesize))]
 			transforms = video_transforms.Compose(video_transform_list)
 			collated_array = transforms(collated_array)
+
 			
 			# converts [c, h, w, f] to [c, f, h, w] for pytorchvideo transforms downstream
 			collated_array = np.array(collated_array).transpose(0, 3, 1, 2)
@@ -370,7 +372,7 @@ class CMRI_PreProcessor:
 if __name__ == '__main__':
 
 	parser = ap.ArgumentParser(
-		description="Preprocess dicom to hdf5 v0.1",
+		description="Preprocess dicom to hdf5 v2.0",
 		epilog="Version 2.0; Created by Rohan Shad, MD"
 	)
 
@@ -401,6 +403,7 @@ if __name__ == '__main__':
 	os.makedirs(output_dir, exist_ok=True)	
 
 	#### Visualize one frame from hdf5 MRI array ####
+	## TODO: Get rid of this once dedicated script for h5 arrays is made ##
 	if visualize == True:
 		filenames = glob.glob(os.path.join(output_dir,'*','*'))
 		file_list_final = []
@@ -435,7 +438,7 @@ if __name__ == '__main__':
 			plt.imshow((array[random.choice(list(range(np.size(array, 0))))])[:,:,1]/255, cmap='gist_gray')
 			plt.show()
 
-	#### Debugger Module ####
+	#### Debugging lines ####
 	elif debug == True:
 		print('Running in debug mode...')
 		if csv_list is not None:
@@ -477,7 +480,7 @@ if __name__ == '__main__':
 		incomplete_df = pd.DataFrame(list(incomplete), columns = ["filenames"])
 		incomplete_df.to_csv(os.path.join(output_dir,'failed_to_process.csv'), index=False)
 
-	#### Main DCM to HDF5 conversion module ####
+	#### Main DCM to HDF5 conversion pipeline ####
 	else:
 		# Main run command to convert dcm files to hdf5
 		p = multiprocessing.Pool(processes=cpus)
