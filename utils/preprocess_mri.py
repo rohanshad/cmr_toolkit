@@ -127,19 +127,18 @@ class CMRI_PreProcessor:
 			print(ex)
 
 
-	def collate_arrays(self, dcm_subfolder, sax_stacked=False):
+def collate_arrays(self, dcm_subfolder, stacked=False):
 		'''
 		MRI sequences save each frame as a separate array with it's own metadata. 
 		Function collate_arrays combines each folder of dcm images into a single array
 		Returns reorderd video array, series name, slice frames for multi-slice sequences, total images
 		Uses InstanceNumber to figure out order of frames in videos / sequences
 		'''
-		if sax_stacked:
+		if stacked:
 			total_images = 0
 			video_list = []
 			slice_location = []
 			unique_frame_index = []
-
 			# For ukbiobank SAX the 'dcm_subfolder' is a list of 'dcm_subfolders'
 			for folder in dcm_subfolder:
 				dcm_list = os.listdir(folder)
@@ -154,6 +153,7 @@ class CMRI_PreProcessor:
 						series = dcm_data[1]
 						mrn = dcm_data[4]
 						unique_frame_index.append(dcm_data[5])
+						
 					else:
 						continue
 		else:
@@ -185,17 +185,14 @@ class CMRI_PreProcessor:
 			reordered_index = tmp_df.index.tolist()
 			slice_location = tmp_df['slice_location'].tolist()
 			video_list = [video_list[i] for i in reordered_index]
-			collated_array = np.array(video_list)
 
-			# TMP debug lines
-			print(f'{series}: {collated_array.shape}')
-			
+
+			collated_array = np.array(video_list)
 			slice_frames = np.where(np.array(slice_location)[:-1] != np.array(slice_location)[1:])[0]
 			collated_array = collated_array.transpose(1 , 2 , 3, 0)
 			video_transform_list = [video_transforms.Resize(self.framesize), video_transforms.CenterCrop(round(0.75*self.framesize))]
 			transforms = video_transforms.Compose(video_transform_list)
 			collated_array = transforms(collated_array)
-
 			
 			# converts [c, h, w, f] to [c, f, h, w] for pytorchvideo transforms downstream
 			collated_array = np.array(collated_array).transpose(0, 3, 1, 2)
@@ -272,72 +269,59 @@ class CMRI_PreProcessor:
 
 	def view_disambugator(self, dcm_directory):
 		'''
-		Iterate over multiple subfolders inside dcm_directory for all datasets 
+		Iterate through multiple subfolders in dcm_directory and group DICOMs by SeriesDescription.
+		Handles cases where multiples of same SeriesDescriptions are split across folders.
 		'''
-		# Process separated views
 
-		sax_files_list = []
+		series_map = defaultdict(list)
+
 		for dcm_subfolder in dcm_directory:
-			dicom_list = os.listdir(dcm_subfolder)
-			df = dcm.dcmread(os.path.join(dcm_subfolder, dicom_list[0]))
+			files = glob.glob(os.path.join(dcm_subfolder, "*"))
+			if not files:
+				continue
+			
+			try:
+				df = dcm.dcmread(files[0], stop_before_pixels=True)
+				series = df.SeriesDescription
 
-			# MEDSTAR
-			if self.institution_prefix == 'medstar':
-				if df.SeriesDescription in ["tfisp_cine_sax","short_axis_cine","short_axis_cine_trufi_retro", "short_axis_stack_cine_trufi_retro"]:
-					if len(df.pixel_array.shape) == 2:
-						sax_files_list.append(dcm_subfolder)
-					print(f'Stacking {df.SeriesDescription}')
+				if "InlineVF" in series:
+					print(f"Skipping InlineVF overlay...")
+					continue
 
-				else:
-					if len(glob.glob(os.path.join(dcm_subfolder, '*'))) >= 1:
-						collated_array = self.collate_arrays(dcm_subfolder, sax_stacked=False)  
+				series_map[series].append(dcm_subfolder)
 
-						if collated_array is not None:
-							self.array_to_h5(*(collated_array))
-					else:
-						print('Failed processing')
+			except Exception as e:
+				print(f"Failed to parse DICOM in {dcm_subfolder}: {e}")
+				continue
 
-			# UKBIOBANK
-			if self.institution_prefix == 'ukbiobank':
-				if df.SeriesDescription in "CINE_segmented_SAX" and df.SeriesDescription not in "InlineVF":
-					sax_files_list.append(dcm_subfolder)
-					print(f'Stacking {df.SeriesDescription}')
+		for series, folders in series_map.items():
+			# if self.institution_prefix == 'ukbiobank' and series_desc != "CINE_segmented_SAX":
+			# 	continue  # UKBB-specific filter
+			
+			# Sort folders by df.SliceLocation if multiple separate folders present
+			if len(folders) > 1:
+				print(f"Processing {series} across {len(folders)} folders ...")	
+				try:
+					folders.sort(
+						key=lambda x: dcm.dcmread(os.path.join(x, os.listdir(x)[0])).SliceLocation,
+						reverse=True,
+					)
+				except Exception:
+					pass  
 
-				else:
-					if "InlineVF" in df.SeriesDescription:
-						print('Skipping scan with random overlay...')
-					else:
-						if len(glob.glob(os.path.join(dcm_subfolder, '*'))) >= 1:
-							collated_array = self.collate_arrays(dcm_subfolder, sax_stacked=False)  
+				#OpenCV limitation where resize operation can only take place on less than 512 frames at a time, hard code to maximum of 10 slices (500 frames)
+				if len(folders) > 10:
+					print("Trimming to first 10 slices")
+					folders = folders[:10]
 
-							if collated_array is not None:
-								self.array_to_h5(*(collated_array))
-						else:
-							print('Failed processing')
+				collated_array = self.collate_arrays(folders, stacked=True)
+				if collated_array is not None:
+					self.array_to_h5(*(collated_array))
 
-		if len(sax_files_list) > 0:
-			sax_files_list.sort(key=lambda x: dcm.dcmread(os.path.join(x,os.listdir(x)[0])).SliceLocation, reverse=True)
-		
-			# opencv limitation where resize operation can only take place on less than 512 frames at a time, hard code to maximum of 10 slices (500 frames)
-			print(f'{len(sax_files_list[0:10])} SAX slices to export...')
-			collated_array = self.collate_arrays(sax_files_list[0:10], sax_stacked=True)
-
-			if collated_array is not None:
-				self.array_to_h5(*(collated_array))
-
-		# OTHER HOSPITALS
-		else:
-			for dcm_subfolder in dcm_directory:
-				if len(glob.glob(os.path.join(dcm_subfolder, '*'))) >= 1:
-					collated_array = self.collate_arrays(dcm_subfolder) 
-					
-					if collated_array is not None:
-						self.array_to_h5(*(collated_array))
-					else:
-						continue
-				else:
-					print('Failed processing')
-
+			else:
+				collated_array = self.collate_arrays(folders[0], stacked=False)
+				if collated_array is not None:
+					self.array_to_h5(*(collated_array))
 
 	def process_dicoms(self, filename):
 		'''
