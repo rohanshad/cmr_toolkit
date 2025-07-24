@@ -37,15 +37,19 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 from dotenv import load_dotenv
 
 
-# Read local_config.yaml and .env for local variables 
+# Read and parse local_config.yaml and .env
 load_dotenv()
-device = platform.uname().node.replace('-','_')
-cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
 
+device = os.getenv("DEVICE_NAME", None)
+if not device:
+	device = platform.uname().node.replace('-','_')
+
+cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
 if 'sh' in device:
 	device = 'sherlock'
 elif '211' in device:
 	device = 'cubic'
+
 TMP_DIR =  getattr(cfg, device).tmp_dir
 BUCKET_NAME =  cfg.global_settings.bucket_name
 
@@ -127,109 +131,109 @@ class CMRI_PreProcessor:
 			print(ex)
 
 
-def collate_arrays(self, dcm_subfolder, stacked=False):
-		'''
-		MRI sequences save each frame as a separate array with it's own metadata. 
-		Function collate_arrays combines each folder of dcm images into a single array
-		Returns reorderd video array, series name, slice frames for multi-slice sequences, total images
-		Uses InstanceNumber to figure out order of frames in videos / sequences
-		'''
-		if stacked:
-			total_images = 0
-			video_list = []
-			slice_location = []
-			unique_frame_index = []
-			# For ukbiobank SAX the 'dcm_subfolder' is a list of 'dcm_subfolders'
-			for folder in dcm_subfolder:
-				dcm_list = os.listdir(folder)
-				total_images += len(dcm_list)
+	def collate_arrays(self, dcm_subfolder, stacked=False):
+			'''
+			MRI sequences save each frame as a separate array with it's own metadata. 
+			Function collate_arrays combines each folder of dcm images into a single array
+			Returns reorderd video array, series name, slice frames for multi-slice sequences, total images
+			Uses InstanceNumber to figure out order of frames in videos / sequences
+			'''
+			if stacked:
+				total_images = 0
+				video_list = []
+				slice_location = []
+				unique_frame_index = []
+				# For ukbiobank SAX the 'dcm_subfolder' is a list of 'dcm_subfolders'
+				for folder in dcm_subfolder:
+					dcm_list = os.listdir(folder)
+					total_images += len(dcm_list)
+
+					# dcm_list is completely unsorted
+					for d in dcm_list:
+						dcm_data = self.dcm_to_array(os.path.join(folder, d))
+						if dcm_data is not None:
+							video_list.append(dcm_data[0])
+							slice_location.append(dcm_data[2])
+							series = dcm_data[1]
+							mrn = dcm_data[4]
+							unique_frame_index.append(dcm_data[5])
+							
+						else:
+							continue
+			else:
+				dcm_list = os.listdir(dcm_subfolder)
+				total_images = len(dcm_list)
+				video_list = []
+				slice_location = []
+				unique_frame_index = []
 
 				# dcm_list is completely unsorted
 				for d in dcm_list:
-					dcm_data = self.dcm_to_array(os.path.join(folder, d))
+					dcm_data = self.dcm_to_array(os.path.join(dcm_subfolder, d))
+
 					if dcm_data is not None:
 						video_list.append(dcm_data[0])
 						slice_location.append(dcm_data[2])
 						series = dcm_data[1]
+						accession = dcm_data[3]
 						mrn = dcm_data[4]
 						unique_frame_index.append(dcm_data[5])
-						
 					else:
 						continue
-		else:
-			dcm_list = os.listdir(dcm_subfolder)
-			total_images = len(dcm_list)
-			video_list = []
-			slice_location = []
-			unique_frame_index = []
 
-			# dcm_list is completely unsorted
-			for d in dcm_list:
-				dcm_data = self.dcm_to_array(os.path.join(dcm_subfolder, d))
+			try:
+				#NEW
+				tmp_df = pd.DataFrame({'unique_frame_index':unique_frame_index, 'slice_location':slice_location})
+				tmp_df = tmp_df.sort_values(by=['slice_location','unique_frame_index'], key=natsort_keygen())
+				
+				reordered_index = tmp_df.index.tolist()
+				slice_location = tmp_df['slice_location'].tolist()
+				video_list = [video_list[i] for i in reordered_index]
 
-				if dcm_data is not None:
-					video_list.append(dcm_data[0])
-					slice_location.append(dcm_data[2])
-					series = dcm_data[1]
-					accession = dcm_data[3]
-					mrn = dcm_data[4]
-					unique_frame_index.append(dcm_data[5])
-				else:
-					continue
 
-		try:
-			#NEW
-			tmp_df = pd.DataFrame({'unique_frame_index':unique_frame_index, 'slice_location':slice_location})
-			tmp_df = tmp_df.sort_values(by=['slice_location','unique_frame_index'], key=natsort_keygen())
+				collated_array = np.array(video_list)
+				slice_frames = np.where(np.array(slice_location)[:-1] != np.array(slice_location)[1:])[0]
+				collated_array = collated_array.transpose(1 , 2 , 3, 0)
+				video_transform_list = [video_transforms.Resize(self.framesize), video_transforms.CenterCrop(round(0.75*self.framesize))]
+				transforms = video_transforms.Compose(video_transform_list)
+				collated_array = transforms(collated_array)
+				
+				# converts [c, h, w, f] to [c, f, h, w] for pytorchvideo transforms downstream
+				collated_array = np.array(collated_array).transpose(0, 3, 1, 2)
+
+				'''
+				Specific workarounds for strange institution specific data handling
+				- UKBIOBANK: 
+				  Has spaces in mrn, and accessions have a weird format that needs cleaning
+				- MEDSTAR: 
+				  dicom data has blank mrn and accessions, that info is pulled directly from tar filename instead
+				- UPENN:
+				  dicom data is not-anonymized, mrn and accession is taken from anonymized filenames instead
+				'''
+
+
+				if self.institution_prefix == "ukbiobank":
+					accession = mrn.replace(" ", "")
+					mrn = dcm_subfolder.split('/')[-2]
+
+				if self.institution_prefix == "medstar" or self.institution_prefix == "upenn":
+					mrn = self.filename.split('-')[0]
+					accession = self.filename.split('-')[1][:-4]
+
+				return collated_array, series, slice_frames, total_images, mrn, accession
+
+			except ValueError as v: 
+				print(v)
+				print('Ragged numpy arrays, Skipping..')
+				collated_array = None
+				slice_frames = None
+				return None
+
+			except Exception as e:
+				print(e)
+				print('Invalid array size. Skipping...')
+				return None
 			
-			reordered_index = tmp_df.index.tolist()
-			slice_location = tmp_df['slice_location'].tolist()
-			video_list = [video_list[i] for i in reordered_index]
-
-
-			collated_array = np.array(video_list)
-			slice_frames = np.where(np.array(slice_location)[:-1] != np.array(slice_location)[1:])[0]
-			collated_array = collated_array.transpose(1 , 2 , 3, 0)
-			video_transform_list = [video_transforms.Resize(self.framesize), video_transforms.CenterCrop(round(0.75*self.framesize))]
-			transforms = video_transforms.Compose(video_transform_list)
-			collated_array = transforms(collated_array)
-			
-			# converts [c, h, w, f] to [c, f, h, w] for pytorchvideo transforms downstream
-			collated_array = np.array(collated_array).transpose(0, 3, 1, 2)
-
-			'''
-			Specific workarounds for strange institution specific data handling
-			- UKBIOBANK: 
-			  Has spaces in mrn, and accessions have a weird format that needs cleaning
-			- MEDSTAR: 
-			  dicom data has blank mrn and accessions, that info is pulled directly from tar filename instead
-			- UPENN:
-			  dicom data is not-anonymized, mrn and accession is taken from anonymized filenames instead
-			'''
-
-
-			if self.institution_prefix == "ukbiobank":
-				accession = mrn.replace(" ", "")
-				mrn = dcm_subfolder.split('/')[-2]
-
-			if self.institution_prefix == "medstar" or self.institution_prefix == "upenn":
-				mrn = self.filename.split('-')[0]
-				accession = self.filename.split('-')[1][:-4]
-
-			return collated_array, series, slice_frames, total_images, mrn, accession
-
-		except ValueError as v: 
-			print(v)
-			print('Ragged numpy arrays, Skipping..')
-			collated_array = None
-			slice_frames = None
-			return None
-
-		except Exception as e:
-			print(e)
-			print('Invalid array size. Skipping...')
-			return None
-		
 
 	def array_to_h5(self, collated_array, series, slice_indices, total_images, mrn, accession):
 		'''

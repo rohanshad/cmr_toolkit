@@ -1,0 +1,26 @@
+services:
+  cmr_toolkit:
+    build: .
+    shm_size: 8G
+    deploy:
+      resources:
+        reservations:
+          cpus: '0.50'
+          memory: 48G
+    volumes:
+      - .:/app
+      - ${RAW_DICOM_PATH}:/app/cmr_toolkit_raw_dicoms
+
+    environment:
+      - PYTHONUNBUFFERED=1 #Buffer of python stdout printed in terminal
+      - DEVICE_NAME=docker
+    command: >
+       sh -c "
+       cd /app/utils &&
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/stanford' -o 'preprocessed_outputs' -c ${NUM_CPUS} -i 'stanford' &&
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/ucsf' -o 'preprocessed_outputs' -c ${NUM_CPUS} -i 'ucsf' &&
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/medstar' -o 'preprocessed_outputs' -c ${NUM_CPUS} -i 'medstar' &&
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/ukbiobank' -o 'preprocessed_outputs' -c ${NUM_CPUS} -i 'ukbiobank' &&
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/upenn' -o 'preprocessed_outputs' -c ${NUM_CPUS} -i 'upenn' &&  
+       python generate_checksums.py -i 'preprocessed_outputs' -o 'generated_checksums.csv' -f 'new_checksums.csv'
+       "

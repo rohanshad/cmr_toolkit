@@ -34,7 +34,7 @@ sympy==1.13.1
 tifffile==2025.6.11
 torch==2.6.0
 torchaudio==2.6.0
-git+https://github.com/hassony2/torch_videovision/archive/refs/tags/0.1.zip#sha256=20819ac12bfbacef261e997a1303523117ae42b74dd7744cb6664030ab84730f
+git+https://github.com/hassony2/torch_videovision.git
 torchvision==0.21.0
 typing_extensions==4.14.1
 tzdata==2025.2
