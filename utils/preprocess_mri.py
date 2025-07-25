@@ -28,6 +28,7 @@ import random
 from torchvideotransforms import video_transforms, volume_transforms 
 import matplotlib.pyplot as plt
 import time
+from collections import defaultdict
 from natsort import natsorted, natsort_keygen
 import platform
 import pylibjpeg
@@ -61,7 +62,7 @@ def notify_slack(message: str):
 	Notifier function for Slack APP cmr_bot 
 	'''
 	try:
-		slack_bot_token = os.getenv("SLACK_CMR_BOT_TOKEN")
+		slack_bot_token = os.getenv("SLACK_TOKEN")
 		cmr_bot_channel = os.getenv("CHANNEL")
 		app = App(token=slack_bot_token)
 		app.client.chat_postMessage(channel=cmr_bot_channel, text=f"{message}")
