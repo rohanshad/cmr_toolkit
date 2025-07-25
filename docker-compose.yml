@@ -23,5 +23,5 @@ services:
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/medstar' -o 'preprocessed_outputs' -c ${NUM_CPUS} -i 'medstar' &&
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/ukbiobank' -o 'preprocessed_outputs' -c ${NUM_CPUS} -i 'ukbiobank' &&
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/upenn' -o 'preprocessed_outputs' -c ${NUM_CPUS} -i 'upenn' &&  
-       python generate_checksums.py -i 'preprocessed_outputs' -o 'generated_checksums.csv' -f 'new_checksums.csv'
+       python generate_checksums.py -i 'preprocessed_outputs' -o 'generated_checksums.csv' -f '../jul25_2025_checksum_manifest.csv'
        "
