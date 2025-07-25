@@ -1,5 +1,6 @@
 services:
   cmr_toolkit:
+    container_name: devtest_cmr_toolkit
     build: .
     shm_size: 8G
     deploy:
