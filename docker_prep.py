@@ -16,12 +16,14 @@ def main():
 	slack_bot_token = getattr(cfg, "global_settings").slack_bot_token
 	slack_bot_channel = getattr(cfg, "global_settings").slack_bot_channel
 	num_cpus = getattr(cfg, device).num_cpus
+	tmp_dir = getattr(cfg, device).tmp_dir
 
 	with open(".env", "w") as f:
 		f.write(f'RAW_DICOM_PATH="{dcm_path}"\n')
 		f.write(f'SLACK_TOKEN="{slack_bot_token}"\n')
 		f.write(f'CHANNEL="{slack_bot_channel}"\n')
 		f.write(f'NUM_CPUS="{num_cpus}"\n')
+		f.write(f'TMP_DIR="{tmp_dir}"\n')
 
 	print(f"Generated .env for device: {device}")
 

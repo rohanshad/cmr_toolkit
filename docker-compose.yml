@@ -11,6 +11,7 @@ services:
     volumes:
       - .:/app
       - ${RAW_DICOM_PATH}:/app/cmr_toolkit_raw_dicoms
+      - ${TMP_DIR}:/app/tmp_dir
 
     environment:
       - PYTHONUNBUFFERED=1 #Buffer of python stdout printed in terminal
@@ -18,10 +19,10 @@ services:
     command: >
        sh -c "
        cd /app/utils &&
-       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/stanford' -o 'preprocessed_outputs' -c ${NUM_CPUS} -i 'stanford' &&
-       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/ucsf' -o 'preprocessed_outputs' -c ${NUM_CPUS} -i 'ucsf' &&
-       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/medstar' -o 'preprocessed_outputs' -c ${NUM_CPUS} -i 'medstar' &&
-       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/ukbiobank' -o 'preprocessed_outputs' -c ${NUM_CPUS} -i 'ukbiobank' &&
-       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/upenn' -o 'preprocessed_outputs' -c ${NUM_CPUS} -i 'upenn' &&  
-       python generate_checksums.py -i 'preprocessed_outputs' -o 'generated_checksums.csv' -f '../jul25_2025_checksum_manifest.csv'
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/stanford' -o '/app/tmp_dir/preprocessed_outputs' -c ${NUM_CPUS} -i 'stanford' &&
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/ucsf' -o '/app/tmp_dir/preprocessed_outputs' -c ${NUM_CPUS} -i 'ucsf' &&
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/medstar' -o '/app/tmp_dir/preprocessed_outputs' -c ${NUM_CPUS} -i 'medstar' &&
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/ukbiobank' -o '/app/tmp_dir/preprocessed_outputs' -c ${NUM_CPUS} -i 'ukbiobank' &&
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/upenn' -o '/app/tmp_dir/preprocessed_outputs' -c ${NUM_CPUS} -i 'upenn' &&  
+       python generate_checksums.py -i '/app/tmp_dir/preprocessed_outputs' -o 'generated_checksums.csv' -c ${NUM_CPUS} -f '../jul25_2025_checksum_manifest.csv'
        "

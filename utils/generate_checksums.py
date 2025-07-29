@@ -50,9 +50,10 @@ def compare_checksums(new_csv, comparison_checksum_file):
 		print('------------------------------------')
 		print(mismatches)
 		print('------------------------------------')
+		raise ValueError("Checksum mismatches present. Terminating push")
 	else:
 		print("All files have matching checksums.")
-		return(True)
+
 
 
 
@@ -62,9 +63,10 @@ if __name__ == "__main__":
 	parser.add_argument('-f', '--comparison_checksum_file', required=False, help='csv file that has comparison checksums')
 	parser.add_argument('-i', '--input_directory', required=True, help='Directory containing HDF5 files')
 	parser.add_argument('-o', '--output_csv', required=True, help='Output CSV file to save checksums')
+	parser.add_argument('-c', '--cpus', required=True, default=12, help="Number of CPUs")
 	args = parser.parse_args()
 
-	cpus = 12 #hardcoded
+	cpus = args.cpus
 	p = multiprocessing.Pool(processes=cpus)
 
 	start_time = time.time()
@@ -107,3 +109,4 @@ if __name__ == "__main__":
 
 	if args.comparison_checksum_file is not None:
 		compare_checksums(args.output_csv, args.comparison_checksum_file)
+

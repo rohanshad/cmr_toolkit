@@ -36,7 +36,8 @@ from pyaml_env import BaseConfig, parse_config
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from dotenv import load_dotenv
-
+from google.cloud import storage
+from gcputils import start_watcher, wait_if_disk_full
 
 # Read and parse local_config.yaml and .env
 load_dotenv()
@@ -71,6 +72,19 @@ def notify_slack(message: str):
 		print(f'WARN: cmr_bot not configured, skipping...')
 		print(ex)
 
+def list_storage(root_dir: str):
+	'''
+	Wrapper for listing function to grab GCP blobs if root_dir starts with "gs:" signifying a GCP bucket
+	'''
+
+	if root_dir[:3] == "gs:":
+		client = storage.Client()
+		blob_list = client.list_blobs(root_dir[3:])
+		filenames = [blob.name for blob in blob_list]
+		return filenames
+	else: 
+		return os.listdir(root_dir)
+
 
 class CMRI_PreProcessor:
 	'''
@@ -83,6 +97,12 @@ class CMRI_PreProcessor:
 		self.institution_prefix = institution_prefix
 		self.compression = compression
 		self.channels = channels
+
+		if root_dir[:3] == "gs:":
+			self.client = storage.Client()
+			self.bucket = self.client.bucket(self.root_dir[3:])
+		else:
+			self.bucket = None
 
 	def dcm_to_array(self, input_file):
 		'''
@@ -333,9 +353,21 @@ class CMRI_PreProcessor:
 		Parent function to create h5 arrays
 		Opens tar directory and reads each folder
 		'''
-		self.filename = filename
 
-		tar = tarfile.open(os.path.join(self.root_dir, self.filename))
+		self.filename = filename
+		
+		if self.bucket is not None:
+			blob_local_path = os.path.join(TMP_DIR, filename)
+			### Throttle function if disk sage > 90% ###
+			wait_if_disk_full(TMP_DIR)
+
+			print(f'Downloading from {root_dir}: {filename}...')
+			blob_item = self.bucket.blob(filename).download_to_filename(blob_local_path)
+			tar = tarfile.open(os.path.join(TMP_DIR, filename))
+
+		else:
+			tar = tarfile.open(os.path.join(self.root_dir, filename))
+		
 		tar_extract_path = os.path.join(TMP_DIR, filename[:-4])
 		tar.extractall(tar_extract_path)
 		tar.close()
@@ -351,8 +383,10 @@ class CMRI_PreProcessor:
 		# Clean up after to save space  
 		try:
 			rmtree(tar_extract_path, ignore_errors=True)
+			if self.bucket is not None:
+				os.remove(blob_local_path)
 		except Exception as ex:
-			print('Failed to purge TMP_DIR')
+			print('Failed to purge TMP_DIR(s)')
 		
 		print(f'Completed processing {self.filename}')
 
@@ -365,7 +399,7 @@ if __name__ == '__main__':
 		epilog="Version 2.0; Created by Rohan Shad, MD"
 	)
 
-	parser.add_argument('-r', '--root_dir', metavar='', required=False, help='Full path to root directory', default='/Users/rohanshad/PHI Safe/test_mri_downloads')
+	parser.add_argument('-r', '--root_dir', metavar='', required=False, help='Full path to root directory OR bucket GCP gs:bucket_name', default='/Users/rohanshad/PHI Safe/test_mri_downloads')
 	parser.add_argument('-l', '--csv_list', metavar='', required=False, help='Process only files listed in csv_list.csv', default=None)
 	parser.add_argument('-o', '--output_dir', metavar='', required=True, help='Path to output directory')
 	parser.add_argument('-z', '--compression', metavar='', required=False, help='Compression type (gzip pr lzf)', default='gzip')
@@ -374,7 +408,8 @@ if __name__ == '__main__':
 	parser.add_argument('-s', '--framesize', metavar='', type=int, default='480', help='framesize in pixels')
 	parser.add_argument('-v', '--visualize', action='store_true', required=False, help='print data from random hdf5 file in output folder')
 	parser.add_argument('-i', '--institution', metavar='', required=True, help='institution name to use as prefix for hdf5 files')
-	
+	parser.add_argument('--gcs_bucket_upload', metavar='', default=None, help='gs:bucket destination for files to be directly uploaded to from local tmp_output directory (-o)')
+
 	args = vars(parser.parse_args())
 	print(args)
 
@@ -386,6 +421,7 @@ if __name__ == '__main__':
 	institution_prefix = args['institution']
 	framesize = args['framesize']
 	debug = args['debug']
+	gcs_bucket_upload = args["gcs_bucket_upload"]
 
 	#For gcloud:
 	output_dir = args['output_dir']
@@ -480,17 +516,21 @@ if __name__ == '__main__':
 				print(df)
 				filenames = df['filenames'].tolist()
 
-				files_in_dir = os.listdir(root_dir)
+				files_in_dir = list_storage(root_dir)
 				filenames = set(filenames).intersection(files_in_dir)
 			except:
 				print('Could not open csv safelist')
-
 		else:
-			filenames = os.listdir(root_dir)
+			filenames = list_storage(root_dir)
 
 		start_time = time.time()
 		mri_processor = CMRI_PreProcessor(root_dir, output_dir, framesize, institution_prefix, 3, compression)
-
+		if gcs_bucket_upload is not None and gcs_bucket_upload[:3] == "gs":
+			try:
+				start_watcher(output_dir)
+			except Exception as ex:
+				print(ex)
+		
 		for f in filenames:
 			# Only loops through tgz files
 			if f[-3:] == 'tgz':
