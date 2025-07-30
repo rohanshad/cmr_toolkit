@@ -25,7 +25,15 @@ def ffmpeg_writer(hdf5_filepath, series, output_dir):
 
 	try:
 		with h5py.File(hdf5_filepath, 'r') as file:
-			vid = np.array(file[series], dtype=np.uint8).transpose(1,2,3,0)
+
+			arr = file[series][()]  # shape: (c,f,h.w]
+			arr = np.transpose(arr, (1, 2, 3, 0))  # to (f, h, w, c)
+
+			# Normalize globally
+			vmin, vmax = np.min(arr), np.max(arr)
+			vid = np.clip((arr - vmin) / (vmax - vmin + 1e-8) * 255, 0, 255).astype(np.uint8)
+
+			#vid = np.array(file[series], dtype=np.uint8).transpose(1,2,3,0)
 			os.makedirs(os.path.join(output_dir,mrn,accession), exist_ok=True)
 
 			process = (
@@ -74,7 +82,7 @@ if __name__ == "__main__":
 	parser.add_argument('-c', '--cpus', required=True, default=12, type=int, help="Number of CPUs")
 	args = parser.parse_args()
 
-	p = multiprocessing.Pool(processes=args.scpus)
+	p = multiprocessing.Pool(processes=args.cpus)
 
 	start_time = time.time()
 	async_results = []
