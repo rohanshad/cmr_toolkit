@@ -31,13 +31,14 @@ import time
 from collections import defaultdict
 from natsort import natsorted, natsort_keygen
 import platform
+import bcolors
 import pylibjpeg
 from pyaml_env import BaseConfig, parse_config
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from dotenv import load_dotenv
 from google.cloud import storage
-from gcputils import start_watcher, wait_if_disk_full
+from gcputils import wait_if_disk_full, GCP_Upload_Manager, mount_gcs_bucket, unmount_gcs_bucket
 
 # Read and parse local_config.yaml and .env
 load_dotenv()
@@ -72,20 +73,6 @@ def notify_slack(message: str):
 		print(f'WARN: cmr_bot not configured, skipping...')
 		print(ex)
 
-def list_storage(root_dir: str):
-	'''
-	Wrapper for listing function to grab GCP blobs if root_dir starts with "gs:" signifying a GCP bucket
-	'''
-
-	if root_dir[:3] == "gs:":
-		client = storage.Client()
-		blob_list = client.list_blobs(root_dir[3:])
-		filenames = [blob.name for blob in blob_list]
-		return filenames
-	else: 
-		return os.listdir(root_dir)
-
-
 class CMRI_PreProcessor:
 	'''
 	Process dicoms / tar decompress >> collated_array >> array_to_h5
@@ -97,12 +84,6 @@ class CMRI_PreProcessor:
 		self.institution_prefix = institution_prefix
 		self.compression = compression
 		self.channels = channels
-
-		if root_dir[:3] == "gs:":
-			self.client = storage.Client()
-			self.bucket = self.client.bucket(self.root_dir[3:])
-		else:
-			self.bucket = None
 
 	def dcm_to_array(self, input_file):
 		'''
@@ -290,6 +271,7 @@ class CMRI_PreProcessor:
 			pass
 
 		h5f.close()
+		return os.path.join(os.path.join(self.output_dir, self.institution_prefix + '_' + mrn, new_filename))
 
 
 	def view_disambugator(self, dcm_directory):
@@ -341,33 +323,28 @@ class CMRI_PreProcessor:
 
 				collated_array = self.collate_arrays(folders, stacked=True)
 				if collated_array is not None:
-					self.array_to_h5(*(collated_array))
+					h5_path = self.array_to_h5(*(collated_array))
 
 			else:
 				collated_array = self.collate_arrays(folders[0], stacked=False)
 				if collated_array is not None:
-					self.array_to_h5(*(collated_array))
+					h5_path = self.array_to_h5(*(collated_array))
 
-	def process_dicoms(self, filename):
+		return h5_path
+
+
+	def process_dicoms(self, filename, queue=None):
 		'''
 		Parent function to create h5 arrays
 		Opens tar directory and reads each folder
 		'''
-
 		self.filename = filename
 		
-		if self.bucket is not None:
-			blob_local_path = os.path.join(TMP_DIR, filename)
+		if queue is not None:
 			### Throttle function if disk sage > 90% ###
 			wait_if_disk_full(TMP_DIR)
-
-			print(f'Downloading from {root_dir}: {filename}...')
-			blob_item = self.bucket.blob(filename).download_to_filename(blob_local_path)
-			tar = tarfile.open(os.path.join(TMP_DIR, filename))
-
-		else:
-			tar = tarfile.open(os.path.join(self.root_dir, filename))
 		
+		tar = tarfile.open(os.path.join(self.root_dir, filename))
 		tar_extract_path = os.path.join(TMP_DIR, filename[:-4])
 		tar.extractall(tar_extract_path)
 		tar.close()
@@ -378,19 +355,19 @@ class CMRI_PreProcessor:
 		dcm_directory = glob.glob(os.path.join(tar_extract_path, '*', '*'))
 
 		# Handles separate pipelines based on data source
-		self.view_disambugator(dcm_directory)
+		h5_path = self.view_disambugator(dcm_directory)
 
 		# Clean up after to save space  
 		try:
 			rmtree(tar_extract_path, ignore_errors=True)
-			if self.bucket is not None:
-				os.remove(blob_local_path)
+
 		except Exception as ex:
 			print('Failed to purge TMP_DIR(s)')
 		
 		print(f'Completed processing {self.filename}')
 
-
+		if queue is not None:
+			queue.put(h5_path)
 
 if __name__ == '__main__':
 
@@ -422,6 +399,8 @@ if __name__ == '__main__':
 	framesize = args['framesize']
 	debug = args['debug']
 	gcs_bucket_upload = args["gcs_bucket_upload"]
+	if gcs_bucket_upload is not None:
+		assert gcs_bucket_upload[3:] == "gs:"
 
 	#For gcloud:
 	output_dir = args['output_dir']
@@ -429,42 +408,42 @@ if __name__ == '__main__':
 
 	#### Visualize one frame from hdf5 MRI array ####
 	## TODO: Get rid of this once dedicated script for h5 arrays is made ##
-	if visualize == True:
-		filenames = glob.glob(os.path.join(output_dir,'*','*'))
-		file_list_final = []
+	# if visualize == True:
+	# 	filenames = glob.glob(os.path.join(output_dir,'*','*'))
+	# 	file_list_final = []
 		
-		for f in filenames:
-			if ".h5" in f:
-				file_list_final.append(f)
+	# 	for f in filenames:
+	# 		if ".h5" in f:
+	# 			file_list_final.append(f)
 			
-		if file_list_final == []:
-			print('No hdf5 files found..')
+	# 	if file_list_final == []:
+	# 		print('No hdf5 files found..')
 
-		else:
-			random_file = random.choice(file_list_final)
-			start_time = time.time()
+	# 	else:
+	# 		random_file = random.choice(file_list_final)
+	# 		start_time = time.time()
 			
-			dat = h5py.File(os.path.join(output_dir, random_file), 'r')
-			dat.visit(print)
+	# 		dat = h5py.File(os.path.join(output_dir, random_file), 'r')
+	# 		dat.visit(print)
 
-			#Reading hdf5 file once is faster when you have to open multiple arrays from it afterwards (I/O bound)
-			dat = dat.get(random.choice(list(dat.keys())))
-			print(time.time() - start_time)
+	# 		#Reading hdf5 file once is faster when you have to open multiple arrays from it afterwards (I/O bound)
+	# 		dat = dat.get(random.choice(list(dat.keys())))
+	# 		print(time.time() - start_time)
 			
-			print(dat)
+	# 		print(dat)
 			
-			# Plotting Code (hdf5 is saved as [c, f h, w])
-			array = np.array(dat).transpose(1, 2, 3, 0)
+	# 		# Plotting Code (hdf5 is saved as [c, f h, w])
+	# 		array = np.array(dat).transpose(1, 2, 3, 0)
 
-			#time = np.size(array, 0) / dat.attrs['fps']
-			#subsample_rate = dat.attrs['fps'] // 20
-			print(random_file)
-			print(f'number of frames: {np.size(array, 0)}')
-			plt.imshow((array[random.choice(list(range(np.size(array, 0))))])[:,:,1]/255, cmap='gist_gray')
-			plt.show()
+	# 		#time = np.size(array, 0) / dat.attrs['fps']
+	# 		#subsample_rate = dat.attrs['fps'] // 20
+	# 		print(random_file)
+	# 		print(f'number of frames: {np.size(array, 0)}')
+	# 		plt.imshow((array[random.choice(list(range(np.size(array, 0))))])[:,:,1]/255, cmap='gist_gray')
+	# 		plt.show()
 
 	#### Debugging lines ####
-	elif debug == True:
+	if debug == True:
 		print('Running in debug mode...')
 		if csv_list is not None:
 			df = pd.read_csv(os.path.join(root_dir, csv_list))
@@ -510,34 +489,46 @@ if __name__ == '__main__':
 		# Main run command to convert dcm files to hdf5
 		p = multiprocessing.Pool(processes=cpus)
 
+		if root_dir[:3] == "gs:":
+			if mount_gcs_bucket(root_dir, f'{TMP_DIR}/mnt/{root_dir[3:]}') is True:
+				root_dir = f'{TMP_DIR}/mnt/{root_dir[3:]}'
+		else:
+			pass
+
 		if csv_list is not None:
 			try:
 				df = pd.read_csv(os.path.join(root_dir, csv_list))
 				print(df)
 				filenames = df['filenames'].tolist()
 
-				files_in_dir = list_storage(root_dir)
+				files_in_dir = os.listdir(root_dir)
 				filenames = set(filenames).intersection(files_in_dir)
 			except:
 				print('Could not open csv safelist')
 		else:
-			filenames = list_storage(root_dir)
+			filenames = os.listdir(root_dir)
 
 		start_time = time.time()
 		mri_processor = CMRI_PreProcessor(root_dir, output_dir, framesize, institution_prefix, 3, compression)
-		if gcs_bucket_upload is not None and gcs_bucket_upload[:3] == "gs":
+		if gcs_bucket_upload is not None:
 			try:
-				start_watcher(output_dir)
+				manager = multiprocessing.Manager()
+				shared_queue = manager.Queue()
+				gcs_manager = GCP_Upload_Manager(output_dir, shared_queue, gcs_bucket_upload[3:])
+				gcs_manager.start()
+
 			except Exception as ex:
 				print(ex)
-		
+		else:
+			shared_queue = None
+
 		for f in filenames:
 			# Only loops through tgz files
 			if f[-3:] == 'tgz':
 				if cpus > 1:
-					p.apply_async(mri_processor.process_dicoms, [f])
+					p.apply_async(mri_processor.process_dicoms, [f, shared_queue])
 				else:
-					mri_processor.process_dicoms(f)
+					mri_processor.process_dicoms(f, shared_queue)
 
 			else:
 				print("No tar files here!")
@@ -545,6 +536,15 @@ if __name__ == '__main__':
 
 		p.close()
 		p.join()
+
+		if shared_queue:
+			shared_queue.put(None)
+			gcs_manager.wait_until_done()
+
+		try:
+			unmount_gcs_bucket(root_dir, f'{TMP_DIR}/mnt/{root_dir[3:]}')
+		except:
+			pass
 
 		print('------------------------------------')
 		print(f'Elapsed time: {round((time.time() - start_time), 2)}s')
