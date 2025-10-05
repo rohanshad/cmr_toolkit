@@ -63,7 +63,7 @@ if __name__ == "__main__":
 	parser.add_argument('-f', '--comparison_checksum_file', required=False, help='csv file that has comparison checksums')
 	parser.add_argument('-i', '--input_directory', required=True, help='Directory containing HDF5 files')
 	parser.add_argument('-o', '--output_csv', required=True, help='Output CSV file to save checksums')
-	parser.add_argument('-c', '--cpus', required=True, default=12, help="Number of CPUs")
+	parser.add_argument('-c', '--cpus', required=True, default=12, type=int, help="Number of CPUs")
 	args = parser.parse_args()
 
 	cpus = args.cpus

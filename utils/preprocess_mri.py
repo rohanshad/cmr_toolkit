@@ -50,6 +50,10 @@ if not device:
 cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
 if 'sh' in device:
 	device = 'sherlock'
+elif 'dgx' in device:
+	device = 'parcc'
+elif 'epyc' in device:
+	device = 'parcc'
 elif '211' in device:
 	device = 'cubic'
 
@@ -301,6 +305,7 @@ class CMRI_PreProcessor:
 				print(f"Failed to parse DICOM in {dcm_subfolder}: {e}")
 				continue
 
+		upenn_sax_folder_list = [] ### remove line later
 		for series, folders in series_map.items():
 			# if self.institution_prefix == 'ukbiobank' and series_desc != "CINE_segmented_SAX":
 			# 	continue  # UKBB-specific filter
@@ -325,10 +330,27 @@ class CMRI_PreProcessor:
 				if collated_array is not None:
 					h5_path = self.array_to_h5(*(collated_array))
 
+			# Dirty hack for UPenn for preprint v1 revisions
+			### deprecate
+			if self.institution_prefix == "upenn" and any(series.startswith(p) for p in ["SAX_Cine_seg_SSFP_SAX_", "Trufi_Cine_SAX_"]):
+				upenn_sax_folder_list.append(folders[0])
+			### deprecate
+
 			else:
 				collated_array = self.collate_arrays(folders[0], stacked=False)
 				if collated_array is not None:
 					h5_path = self.array_to_h5(*(collated_array))
+		### deprecate
+		if len(upenn_sax_folder_list) > 0:
+			print(f'Stacking {series} into a single HDF5 array')
+			if len(upenn_sax_folder_list) > 10:
+					print("Trimming to first 10 slices")
+					upenn_sax_folder_list = upenn_sax_folder_list[:10]
+
+			collated_array = self.collate_arrays(upenn_sax_folder_list, stacked=True)
+			if collated_array is not None:
+				h5_path = self.array_to_h5(*(collated_array))
+		### deprecate
 
 		return h5_path
 
@@ -405,42 +427,6 @@ if __name__ == '__main__':
 	#For gcloud:
 	output_dir = args['output_dir']
 	os.makedirs(output_dir, exist_ok=True)	
-
-	#### Visualize one frame from hdf5 MRI array ####
-	## TODO: Get rid of this once dedicated script for h5 arrays is made ##
-	# if visualize == True:
-	# 	filenames = glob.glob(os.path.join(output_dir,'*','*'))
-	# 	file_list_final = []
-		
-	# 	for f in filenames:
-	# 		if ".h5" in f:
-	# 			file_list_final.append(f)
-			
-	# 	if file_list_final == []:
-	# 		print('No hdf5 files found..')
-
-	# 	else:
-	# 		random_file = random.choice(file_list_final)
-	# 		start_time = time.time()
-			
-	# 		dat = h5py.File(os.path.join(output_dir, random_file), 'r')
-	# 		dat.visit(print)
-
-	# 		#Reading hdf5 file once is faster when you have to open multiple arrays from it afterwards (I/O bound)
-	# 		dat = dat.get(random.choice(list(dat.keys())))
-	# 		print(time.time() - start_time)
-			
-	# 		print(dat)
-			
-	# 		# Plotting Code (hdf5 is saved as [c, f h, w])
-	# 		array = np.array(dat).transpose(1, 2, 3, 0)
-
-	# 		#time = np.size(array, 0) / dat.attrs['fps']
-	# 		#subsample_rate = dat.attrs['fps'] // 20
-	# 		print(random_file)
-	# 		print(f'number of frames: {np.size(array, 0)}')
-	# 		plt.imshow((array[random.choice(list(range(np.size(array, 0))))])[:,:,1]/255, cmap='gist_gray')
-	# 		plt.show()
 
 	#### Debugging lines ####
 	if debug == True:

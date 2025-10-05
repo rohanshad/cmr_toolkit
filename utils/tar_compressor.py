@@ -65,8 +65,8 @@ def csv_tarcompress(root_dir, filename, output_dir, csv_reference):
 		tar.close()
 
 	except Exception as e:
-	 	print("DICOM corrupted! Skipping...")
-	 	print(e)
+		print("DICOM corrupted! Skipping...")
+		print(e)
 
 def dcm_tarcompress(root_dir, filename, output_dir):
 	'''
