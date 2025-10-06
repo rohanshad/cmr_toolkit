@@ -332,7 +332,7 @@ class CMRI_PreProcessor:
 
 			# Dirty hack for UPenn for preprint v1 revisions
 			### deprecate
-			if self.institution_prefix == "upenn" and any(series.startswith(p) for p in ["SAX_Cine_seg_SSFP_SAX_", "Trufi_Cine_SAX_"]):
+			elif self.institution_prefix == "upenn" and any(series.startswith(p) for p in ["SAX_Cine_seg_SSFP_SAX_", "Trufi_Cine_SAX_"]):
 				upenn_sax_folder_list.append(folders[0])
 			### deprecate
 
