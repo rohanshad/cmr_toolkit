@@ -7,7 +7,7 @@ services:
       resources:
         reservations:
           cpus: '0.50'
-          memory: 48G
+          memory: 64G
     volumes:
       - .:/app
       - ${RAW_DICOM_PATH}:/app/cmr_toolkit_raw_dicoms
@@ -24,5 +24,5 @@ services:
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/medstar' -o '/app/tmp_dir/preprocessed_outputs' -c ${NUM_CPUS} -i 'medstar' &&
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/ukbiobank' -o '/app/tmp_dir/preprocessed_outputs' -c ${NUM_CPUS} -i 'ukbiobank' &&
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/upenn' -o '/app/tmp_dir/preprocessed_outputs' -c ${NUM_CPUS} -i 'upenn' &&  
-       python generate_checksums.py -i '/app/tmp_dir/preprocessed_outputs' -o 'generated_checksums.csv' -c ${NUM_CPUS} -f '../jul25_2025_checksum_manifest.csv'
+       python generate_checksums.py -i '/app/tmp_dir/preprocessed_outputs' -o 'generated_checksums.csv' -c ${NUM_CPUS} -f '../oct5_2025_checksum_manifest.csv'
        "

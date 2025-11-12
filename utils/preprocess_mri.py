@@ -25,7 +25,8 @@ import argparse as ap
 import matplotlib  
 import h5py
 import random
-from torchvideotransforms import video_transforms, volume_transforms 
+import torch
+from torchvision.transforms import v2
 import matplotlib.pyplot as plt
 import time
 from collections import defaultdict
@@ -114,10 +115,10 @@ class CMRI_PreProcessor:
 				gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
 
 				# c, f, w, h
-				array = np.repeat(gray[None,...],self.channels,axis=0)
+				array = np.repeat(gray[None,...],3,axis=0)
 
 			elif len(df.pixel_array.shape) == 2:
-				array = np.repeat(df.pixel_array[None,...],self.channels,axis=0)
+				array = np.repeat(df.pixel_array[None,...],3,axis=0)
 
 			else:
 				# Placeholder empty frame so things don't break
@@ -140,7 +141,7 @@ class CMRI_PreProcessor:
 	def collate_arrays(self, dcm_subfolder, stacked=False):
 			'''
 			MRI sequences save each frame as a separate array with it's own metadata. 
-			Function collate_arrays combines each folder of dcm images into a single array
+			Function collate_arrays com vbbines each folder of dcm images into a single array
 			Returns reorderd video array, series name, slice frames for multi-slice sequences, total images
 			Uses InstanceNumber to figure out order of frames in videos / sequences
 			'''
@@ -196,16 +197,12 @@ class CMRI_PreProcessor:
 				slice_location = tmp_df['slice_location'].tolist()
 				video_list = [video_list[i] for i in reordered_index]
 
-
-				collated_array = np.array(video_list)
+				### Torchvision transformations replacement ###
+				collated_array = torch.Tensor(np.array(video_list))
 				slice_frames = np.where(np.array(slice_location)[:-1] != np.array(slice_location)[1:])[0]
-				collated_array = collated_array.transpose(1 , 2 , 3, 0)
-				video_transform_list = [video_transforms.Resize(self.framesize), video_transforms.CenterCrop(round(0.75*self.framesize))]
-				transforms = video_transforms.Compose(video_transform_list)
-				collated_array = transforms(collated_array)
-				
-				# converts [c, h, w, f] to [c, f, h, w] for pytorchvideo transforms downstream
-				collated_array = np.array(collated_array).transpose(0, 3, 1, 2)
+				transforms = v2.Compose([v2.Resize(size=self.framesize), v2.CenterCrop(round(0.75*self.framesize))])
+				collated_array = transforms(collated_array) # returns as [f, c, h, w]
+				collated_array = collated_array.transpose(1, 0) # returns as [c, f, h, w] for now ##TODO: REMOVE AND SWITCH TO STORING GREYSCALE f, c, h, w	 
 
 				'''
 				Specific workarounds for strange institution specific data handling
@@ -219,6 +216,7 @@ class CMRI_PreProcessor:
 
 
 				if self.institution_prefix == "ukbiobank":
+					# replace with anonymizing uuid based script
 					accession = mrn.replace(" ", "")
 					mrn = dcm_subfolder.split('/')[-2]
 
@@ -249,6 +247,19 @@ class CMRI_PreProcessor:
 		
 		The first few arguments are positional (up to accession)
 		'''
+		dytpe_setting = 'f'
+		if self.channels == "grey":
+			## Normalize globally ##
+			# This requires dtype to be manually set to "uint8" to truly work and yield storage savings # 
+			vmin, vmax = torch.min(collated_array), torch.max(collated_array)
+			collated_array = torch.clamp((collated_array - vmin) / (vmax - vmin + 1e-8) * 255, 0, 255).to(torch.uint8)
+			dytpe_setting = 'uint8'
+			
+			if len(collated_array.shape) == 4:
+				collated_array = collated_array[:,1,:,:]
+			elif len(collated_array.shape) == 3:
+				collated_array = collated_array[1,:,:]
+
 
 		os.makedirs(os.path.join(self.output_dir, self.institution_prefix + '_' + mrn), exist_ok=True)
 		new_filename = accession + '.h5'
@@ -259,7 +270,7 @@ class CMRI_PreProcessor:
 		
 		# Store each series as an array (Skips if series already exists. Might need to rework this 
 		try:
-			dset = h5f.create_dataset(series, data=collated_array, dtype='f', compression=self.compression)
+			dset = h5f.create_dataset(series, data=collated_array, dtype=dytpe_setting, compression=self.compression)
 
 			# Attributes
 			#dset.attrs.create('fps', fps, dtype='i')
@@ -305,7 +316,7 @@ class CMRI_PreProcessor:
 				print(f"Failed to parse DICOM in {dcm_subfolder}: {e}")
 				continue
 
-		upenn_sax_folder_list = [] ### remove line later
+		# upenn_sax_folder_list = [] ### remove line later
 		for series, folders in series_map.items():
 			# if self.institution_prefix == 'ukbiobank' and series_desc != "CINE_segmented_SAX":
 			# 	continue  # UKBB-specific filter
@@ -331,26 +342,26 @@ class CMRI_PreProcessor:
 					h5_path = self.array_to_h5(*(collated_array))
 
 			# Dirty hack for UPenn for preprint v1 revisions
-			### deprecate
-			elif self.institution_prefix == "upenn" and any(series.startswith(p) for p in ["SAX_Cine_seg_SSFP_SAX_", "Trufi_Cine_SAX_"]):
-				upenn_sax_folder_list.append(folders[0])
-			### deprecate
+			# ### deprecate
+			# elif self.institution_prefix == "upenn" and any(series.startswith(p) for p in ["SAX_Cine_seg_SSFP_SAX_", "Trufi_Cine_SAX_"]):
+			# 	upenn_sax_folder_list.append(folders[0])
+			# ### deprecate
 
 			else:
 				collated_array = self.collate_arrays(folders[0], stacked=False)
 				if collated_array is not None:
 					h5_path = self.array_to_h5(*(collated_array))
 		### deprecate
-		if len(upenn_sax_folder_list) > 0:
-			print(f'Stacking {series} into a single HDF5 array')
-			if len(upenn_sax_folder_list) > 10:
-					print("Trimming to first 10 slices")
-					upenn_sax_folder_list = upenn_sax_folder_list[:10]
+		# if len(upenn_sax_folder_list) > 0:
+		# 	print(f'Stacking {series} into a single HDF5 array')
+		# 	if len(upenn_sax_folder_list) > 10:
+		# 			print("Trimming to first 10 slices")
+		# 			upenn_sax_folder_list = upenn_sax_folder_list[:10]
 
-			collated_array = self.collate_arrays(upenn_sax_folder_list, stacked=True)
-			if collated_array is not None:
-				h5_path = self.array_to_h5(*(collated_array))
-		### deprecate
+		# 	collated_array = self.collate_arrays(upenn_sax_folder_list, stacked=True)
+		# 	if collated_array is not None:
+		# 		h5_path = self.array_to_h5(*(collated_array))
+		# ### deprecate
 
 		return h5_path
 
@@ -408,6 +419,7 @@ if __name__ == '__main__':
 	parser.add_argument('-v', '--visualize', action='store_true', required=False, help='print data from random hdf5 file in output folder')
 	parser.add_argument('-i', '--institution', metavar='', required=True, help='institution name to use as prefix for hdf5 files')
 	parser.add_argument('--gcs_bucket_upload', metavar='', default=None, help='gs:bucket destination for files to be directly uploaded to from local tmp_output directory (-o)')
+	parser.add_argument('--channels', metavar='', default="rgb", help='Saves hdf5 array either as 3 channel "rgb" or 1 channel "grey" to optimize storage space')
 
 	args = vars(parser.parse_args())
 	print(args)
@@ -421,6 +433,7 @@ if __name__ == '__main__':
 	framesize = args['framesize']
 	debug = args['debug']
 	gcs_bucket_upload = args["gcs_bucket_upload"]
+	channels = args["channels"]
 	if gcs_bucket_upload is not None:
 		assert gcs_bucket_upload[3:] == "gs:"
 
@@ -495,7 +508,7 @@ if __name__ == '__main__':
 			filenames = os.listdir(root_dir)
 
 		start_time = time.time()
-		mri_processor = CMRI_PreProcessor(root_dir, output_dir, framesize, institution_prefix, 3, compression)
+		mri_processor = CMRI_PreProcessor(root_dir, output_dir, framesize, institution_prefix, channels, compression)
 		if gcs_bucket_upload is not None:
 			try:
 				manager = multiprocessing.Manager()
