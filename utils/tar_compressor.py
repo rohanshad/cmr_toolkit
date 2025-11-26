@@ -97,6 +97,46 @@ def dcm_tarcompress(root_dir, filename, output_dir):
 	except:
 	 	print("DICOM corrupted! Skipping...")
 
+def segmed_tarcompress(root_dir, filename, output_dir, csv_reference):
+	'''
+	First reads dcm files and renames the filename to this 
+	Then compresses folders into tarfiles
+	'''
+
+	ref_data = pd.read_csv(csv_reference).dropna().reset_index()
+	dicom_list = glob.glob(os.path.join(root_dir,filename,'*','*'))
+
+	try:
+		#print(dicom_list[1])
+		df = dcm.dcmread(dicom_list[1])
+
+		# Check if any dicoms have non greyscale 
+		df.PhotometricInterpretation = 'MONOCHROME2'
+
+		# Save series name + frame location 
+		study_uid = str(df.StudyInstanceUID)
+		mrn = df.PatientID 
+
+		# Possibility of MRN not being in crosswalk, but accession # will always match
+		if study_uid in ref_data['Study ID'].astype(str).values:
+			mrn =  ref_data.loc[ref_data['Study ID'].astype(str) == study_uid, 'anon_mrn'].values[0]
+			accession = ref_data.loc[ref_data['Study ID'].astype(str) == study_uid, 'anon_uid'].values[0]
+			print(f'{bcolors.BLUE}Processing{bcolors.ENDC}: {mrn}-{accession}')
+		else:
+			pass
+			print(f'{bcolors.ERR}No matching scan data in crosswalk for acc: {study_uid}{bcolors.END}')
+
+		# Dump entire thing as a tarfile with anonymized mrn as basename
+		folder_name = os.path.join(root_dir, filename)
+		tar = tarfile.open(os.path.join(output_dir, mrn+'-'+accession+'.tgz'), "w:gz")
+		tar.add(folder_name, arcname=filename)
+		tar.close()
+
+	except Exception as e:
+		print("DICOM corrupted! Skipping...")
+		print(e)
+
+
 def dcm_rewrite_originals_tarcompress(root_dir, filename, output_dir):
 	'''
 	First reads dcm files and renames the filename to this 
@@ -254,6 +294,14 @@ if __name__ == '__main__':
 				p.apply_async(nofolder_tarcompress, [root_dir, f, output_dir, csv_reference])
 			else:
 				nofolder_tarcompress(root_dir, f, output_dir, csv_reference)	
+
+	elif mode == 'segmed':
+
+		for f in filenames:
+			if cpus > 1:
+				p.apply_async(segmed_tarcompress, [root_dir, f, output_dir, csv_reference])
+			else:
+				segmed_tarcompress(root_dir, f, output_dir, csv_reference)	
 
 	p.close()
 	p.join()
