@@ -24,5 +24,11 @@ services:
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/medstar' -o '/app/tmp_dir/preprocessed_outputs' -c ${NUM_CPUS} -i 'medstar' &&
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/ukbiobank' -o '/app/tmp_dir/preprocessed_outputs' -c ${NUM_CPUS} -i 'ukbiobank' &&
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/upenn' -o '/app/tmp_dir/preprocessed_outputs' -c ${NUM_CPUS} -i 'upenn' &&  
-       python generate_checksums.py -i '/app/tmp_dir/preprocessed_outputs' -o 'generated_checksums.csv' -c ${NUM_CPUS} -f '../oct5_2025_checksum_manifest.csv'
+       python generate_checksums.py -i '/app/tmp_dir/preprocessed_outputs' -o 'generated_checksums.csv' -c ${NUM_CPUS} -f '../nov13_2025_checksum_manifest.csv' &&
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/stanford' -o '/app/tmp_dir/preprocessed_outputs_greyscale' -c ${NUM_CPUS} -i 'stanford' --channels='grey' &&
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/ucsf' -o '/app/tmp_dir/preprocessed_outputs_greyscale' -c ${NUM_CPUS} -i 'ucsf' --channels='grey' &&
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/medstar' -o '/app/tmp_dir/preprocessed_outputs_greyscale' -c ${NUM_CPUS} -i 'medstar' --channels='grey' &&
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/ukbiobank' -o '/app/tmp_dir/preprocessed_outputs_greyscale' -c ${NUM_CPUS} -i 'ukbiobank' --channels='grey' &&
+       python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/upenn' -o '/app/tmp_dir/preprocessed_outputs_greyscale' -c ${NUM_CPUS} -i 'upenn' --channels='grey' &&  
+       python generate_checksums.py -i '/app/tmp_dir/preprocessed_outputs_greyscale' -o 'greyscale_generated_checksums.csv' -c ${NUM_CPUS} -f '../nov28_2025_greyscale_checksum_manifest.csv'
        "

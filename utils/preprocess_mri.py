@@ -202,7 +202,7 @@ class CMRI_PreProcessor:
 				slice_frames = np.where(np.array(slice_location)[:-1] != np.array(slice_location)[1:])[0]
 				transforms = v2.Compose([v2.Resize(size=self.framesize), v2.CenterCrop(round(0.75*self.framesize))])
 				collated_array = transforms(collated_array) # returns as [f, c, h, w]
-				collated_array = collated_array.transpose(1, 0) # returns as [c, f, h, w] for now ##TODO: REMOVE AND SWITCH TO STORING GREYSCALE f, c, h, w	 
+				#collated_array = collated_array.transpose(1, 0) # returns as [c, f, h, w] for now ##TODO: REMOVE AND SWITCH TO STORING GREYSCALE f, c, h, w	 
 
 				'''
 				Specific workarounds for strange institution specific data handling

@@ -27,6 +27,8 @@ if 'sh' in device:
 	device = 'sherlock'
 elif '211' in device or 'cubic' in device:
 	device = 'cubic'
+elif 'epyc' in device or 'dgx' in device:
+	device = 'parcc'
 TMP_DIR =  getattr(cfg, device).tmp_dir
 BUCKET_NAME =  cfg.global_settings.bucket_name
 
@@ -125,6 +127,17 @@ def segmed_tarcompress(root_dir, filename, output_dir, csv_reference):
 		else:
 			pass
 			print(f'{bcolors.ERR}No matching scan data in crosswalk for acc: {study_uid}{bcolors.END}')
+
+		for dcm_file in dicom_list:
+			df = dcm.dcmread(dcm_file)
+			# Check if any dicoms have non greyscale 
+			df.PhotometricInterpretation = 'MONOCHROME2'
+			df.PatientID = mrn
+			df.AccessionNumber = accession
+			df.is_little_endian = True
+			df.is_implicit_VR = False
+
+			df.save_as(dcm_file, write_like_original=False)	
 
 		# Dump entire thing as a tarfile with anonymized mrn as basename
 		folder_name = os.path.join(root_dir, filename)

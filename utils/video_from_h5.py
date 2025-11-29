@@ -19,15 +19,30 @@ import pandas as pd
 import numpy as np
 import bcolors
 
-def ffmpeg_writer(hdf5_filepath, series, output_dir):
+def ffmpeg_writer(hdf5_filepath, series, output_dir, channels):
 	mrn = os.path.split(os.path.dirname(hdf5_filepath))[1]
 	accession = os.path.basename(hdf5_filepath)[:-3]
 
 	try:
 		with h5py.File(hdf5_filepath, 'r') as file:
 
-			arr = file[series][()]  # shape: (c,f,h.w]
-			arr = np.transpose(arr, (1, 2, 3, 0))  # to (f, h, w, c)
+			arr = file[series][()]  # shape: [c,f,h.w] for old processed runs, new are [f,c,h,w]
+			if channels == 'grey':
+				assert len(arr.shape) < 4, "Channel check failed for channels = greyscale"
+				
+				### NP.REPEAT TO 3 CHANNEL SHAPE ###
+				if len(arr.shape) == 3:
+					arr = np.repeat(arr[:,None,:,:],repeats=3,axis=1) # [f, c=3, h, w]
+				elif len(arr.shape) == 2:
+					arr = np.repeat(arr[None,:,:],repeats=3,axis=0) # [c=3, h, w]
+
+			elif channels == 'rgb':
+				assert arr.shape[-3] == 3, "Channel check failed for channels = rgb"
+
+			if len(arr.shape) == 4:
+				arr = arr.transpose(0, 2, 3, 1) # Transpose to (f, h, w, c)
+			elif len(arr.shape) == 3:
+				arr = arr.transpose(1, 2, 0) # Transpose to (h, w, c)
 
 			# Normalize globally
 			vmin, vmax = np.min(arr), np.max(arr)
@@ -40,7 +55,7 @@ def ffmpeg_writer(hdf5_filepath, series, output_dir):
 				ffmpeg
 				.input('pipe:', format='rawvideo', pix_fmt='rgb24', s=f'360,360')
 				.filter('normalize',strength=1)
-				.output(f'{os.path.join(output_dir,mrn,accession,series+".mp4")}', pix_fmt='yuv420p', r=24, loglevel="quiet")
+				.output(f'{os.path.join(output_dir,mrn,accession,series+".mp4")}', pix_fmt='yuv420p', crf='14', r=24, loglevel="quiet")
 				.overwrite_output()
 				.run_async(pipe_stdin=True)
 				)
@@ -80,6 +95,7 @@ if __name__ == "__main__":
 	parser.add_argument('-i', '--input_dir', required=True, help='Directory containing HDF5 files')
 	parser.add_argument('-o', '--output_dir', required=True, help='Output path, subdirs for outputs will be generated here')
 	parser.add_argument('-c', '--cpus', required=True, default=12, type=int, help="Number of CPUs")
+	parser.add_argument('--channels', required=True, default='grey', type=str, help="Choice between 'grey' for greyscale stored hdf5 and 'rgb'")
 	args = parser.parse_args()
 
 	p = multiprocessing.Pool(processes=args.cpus)
@@ -91,9 +107,9 @@ if __name__ == "__main__":
 
 	for index, row in df.iterrows():
 		if args.cpus > 1:
-			p.apply_async(ffmpeg_writer(row['filepaths'], row['series'], args.output_dir))
+			p.apply_async(ffmpeg_writer(row['filepaths'], row['series'], args.output_dir, args.channels))
 		else:
-			ffmpeg_writer(row['filepaths'], row['series'], args.output_dir)
+			ffmpeg_writer(row['filepaths'], row['series'], args.output_dir, args.channels)
 
 	p.close()
 	p.join()

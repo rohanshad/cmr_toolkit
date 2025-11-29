@@ -68,11 +68,15 @@ class Dicom_Metadata_Scanner:
 				mrn = self.filename.split('-')[0]
 				accession = self.filename.split('-')[1][:-4]
 
-			if institution_prefix == "ukbiobank":
+			elif institution_prefix == 'segmed':
+				mrn = self.filename.split('-')[0]
+				accession = self.filename.split('-')[1][:-4]
+
+			elif institution_prefix == "ukbiobank":
 				accession = mrn.replace(" ", "")
 				mrn = dcm_subfolder.split('/')[-2]
 
-			return series, frame_loc, scanner, field_strength, self.institution_prefix+'_'+mrn, accession
+			return series, frame_loc, scanner, field_strength, mrn, accession
 
 		except Exception as ex:
 			print("DICOM corrupted! Skipping...")
@@ -94,10 +98,10 @@ class Dicom_Metadata_Scanner:
 
 		metadata_minilist = []
 		for dcm_subfolder in dcm_directory:
-			if len(glob.glob(os.path.join(glob.escape(dcm_subfolder), '*'))) > 1:
+			if len(glob.glob(os.path.join(glob.escape(dcm_subfolder), '*'))) > 0:
 				metadata_minilist.append(self.dcm_reader(dcm_subfolder))
 			else:
-				print('Skipped single image series')
+				print('Skipped empty dir series')
 
 		# Clean up after to save space	
 		try:
@@ -193,7 +197,18 @@ if __name__ == '__main__':
 		freq.columns = ['series_description', 'frequency']
 		print(freq)
 		freq.to_csv(f'{institution_prefix}_metadata_freq.csv', index=False)
-	
+
+		meta_df = metadata_df.drop_duplicates('accession')
+		meta_df['parent_folder'] = meta_df['mrn']
+		meta_df['institution'] = institution_prefix	
+		meta_df = meta_df[['parent_folder','accession','field_strength','scanner','institution']]
+		meta_df.to_csv(f'{institution_prefix}_meta_df_summarized.csv', index=False)
+
+		print('------------------------------------')
+		meta_df['scanner'].value_counts(dropna=False)
+		print('------------------------------------')
+		meta_df['field_strength'].value_counts(dropna=False)
+		
 
 	print()
 	print('Saved metadata from', len(async_results), 'files (Accession numbers)')
