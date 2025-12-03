@@ -302,18 +302,23 @@ class CMRI_PreProcessor:
 			if not files:
 				continue
 			
-			try:
-				df = dcm.dcmread(files[0], stop_before_pixels=True)
-				series = df.SeriesDescription
+			if len(files) < 2500:
+				try:
+					df = dcm.dcmread(files[0], stop_before_pixels=True)
+					series = df.SeriesDescription
 
-				if "InlineVF" in series:
-					print(f"Skipping InlineVF overlay...")
+					if "InlineVF" in series:
+						print(f"Skipping InlineVF overlay...")
+						continue
+	 
+					series_map[series].append(dcm_subfolder)
+
+				except Exception as e:
+					print(f"Failed to parse DICOM in {dcm_subfolder}: {e}")
 					continue
 
-				series_map[series].append(dcm_subfolder)
-
-			except Exception as e:
-				print(f"Failed to parse DICOM in {dcm_subfolder}: {e}")
+			else: 
+				print(f"Insane number of frames detected: {len(files)}; skipping...")
 				continue
 
 		# upenn_sax_folder_list = [] ### remove line later
@@ -435,7 +440,7 @@ if __name__ == '__main__':
 	gcs_bucket_upload = args["gcs_bucket_upload"]
 	channels = args["channels"]
 	if gcs_bucket_upload is not None:
-		assert gcs_bucket_upload[3:] == "gs:"
+		assert gcs_bucket_upload[:3] == "gs:"
 
 	#For gcloud:
 	output_dir = args['output_dir']
@@ -489,7 +494,8 @@ if __name__ == '__main__':
 		p = multiprocessing.Pool(processes=cpus)
 
 		if root_dir[:3] == "gs:":
-			if mount_gcs_bucket(root_dir, f'{TMP_DIR}/mnt/{root_dir[3:]}') is True:
+			# Split / to ensure mount point doesn't duplicate subdirs if present
+			if mount_gcs_bucket(root_dir, f'{TMP_DIR}/mnt/{root_dir[3:].split("/")[0]}') is True:
 				root_dir = f'{TMP_DIR}/mnt/{root_dir[3:]}'
 		else:
 			pass

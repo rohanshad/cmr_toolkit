@@ -50,7 +50,7 @@ def upload_to_gcs(file_path, bucket):
 	try:
 		blob.upload_from_filename(file_path, timeout=300)
 		print(f'{bcolors.BLUE}Uploaded file: {filename} to {bucket}{bcolors.ENDC}')
-		shutil.rmtree(os.path.dirname(file_path))
+		os.remove(file_path)
 
 	except Exception as ex:
 		print(f'{bcolors.ERR}ERR: Failed to upload {filename}: {ex}{bcolors.ENDC}')
@@ -113,6 +113,7 @@ def mount_gcs_bucket(bucket_name: str, mount_point: str, read_only: bool = True,
 	'''
 	
 	bucket_name = bucket_name[3:]
+	bucket_name = bucket_name.split("/")[0]
 	  
 	# Check if the mount point is already mounted
 	if os.path.ismount(mount_point):
