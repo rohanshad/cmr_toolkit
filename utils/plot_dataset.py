@@ -11,8 +11,8 @@ import numpy as np
 import h5py
 import argparse as ap
 import glob
-import imageio
-import imageio_ffmpeg 
+#import imageio
+#import imageio_ffmpeg 
 import subprocess
 import platform
 from pyaml_env import BaseConfig, parse_config
@@ -61,7 +61,13 @@ def hdf5list_to_array(input_hdf5_list, series):
 	array_list = []
 	for input_hdf5 in input_hdf5_list:
 		try:
-			dat = h5py.File(input_hdf5, 'r')[series]
+			if series == 'random':
+				series_list = h5py.File(input_hdf5,'r').keys()
+				series = random.choice(list(series_list))
+				dat = h5py.File(input_hdf5,'r')[series]
+				series = 'random'
+			else:
+				dat = h5py.File(input_hdf5, 'r')[series]
 			array = np.array(dat).transpose(1, 2, 3, 0)
 			array_list.append(array)
 		except:
@@ -105,10 +111,18 @@ def plot_random_frames(input_arrays):
 		img_list.append(img)
 
 	# Plotting code
-	_, axs = plt.subplots(3, 5, figsize=(6, 6))
+	_, axs = plt.subplots(9, 10, figsize=(20, 18))
 	axs = axs.flatten()
 	for img, ax in zip(img_list, axs):
 		ax.imshow(img[:,:,1]/225, cmap='viridis')
+		ax.set_xticks([])
+		ax.set_yticks([])
+
+	plt.tight_layout()
+	plt.subplots_adjust(wspace=0.05, hspace=0.05)	
+	plt.margins(0)
+
+	plt.savefig('cover_art_concept.png', transparent=True) 
 	plt.show()
 
 
@@ -222,6 +236,9 @@ if __name__ == '__main__':
 		print('Plotting', view_name, 'for', random_file)
 		plot_study_slices(*hdf5stack_to_array(random_file, view_name), skip_period = 2)
 
+	elif mode == 'cover_art':
+		random_file = random.sample(file_list_final, 90)
+		plot_random_frames(hdf5list_to_array(random_file, "random"))
 
 	elif mode == 'video':
 		'''
