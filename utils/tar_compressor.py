@@ -107,6 +107,7 @@ def segmed_tarcompress(root_dir, filename, output_dir, csv_reference):
 
 	ref_data = pd.read_csv(csv_reference).dropna().reset_index()
 	dicom_list = glob.glob(os.path.join(root_dir,filename,'*','*'))
+	os.chdir(root_dir)
 
 	try:
 		#print(dicom_list[1])
@@ -129,6 +130,9 @@ def segmed_tarcompress(root_dir, filename, output_dir, csv_reference):
 			print(f'{bcolors.ERR}No matching scan data in crosswalk for acc: {study_uid}{bcolors.END}')
 
 		for dcm_file in dicom_list:
+			tmp_path = os.path.join(TMP_DIR, os.path.relpath(dcm_file))
+			os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
+			
 			df = dcm.dcmread(dcm_file)
 			# Check if any dicoms have non greyscale 
 			df.PhotometricInterpretation = 'MONOCHROME2'
@@ -137,13 +141,15 @@ def segmed_tarcompress(root_dir, filename, output_dir, csv_reference):
 			df.is_little_endian = True
 			df.is_implicit_VR = False
 
-			df.save_as(dcm_file, write_like_original=False)	
+			df.save_as(tmp_path, write_like_original=False)	
 
 		# Dump entire thing as a tarfile with anonymized mrn as basename
-		folder_name = os.path.join(root_dir, filename)
+		folder_name = os.path.join(TMP_DIR, os.path.basename(filename))
 		tar = tarfile.open(os.path.join(output_dir, mrn+'-'+accession+'.tgz'), "w:gz")
 		tar.add(folder_name, arcname=filename)
 		tar.close()
+
+		shutil.rmtree(folder_name)
 
 	except Exception as e:
 		print("DICOM corrupted! Skipping...")
@@ -152,11 +158,12 @@ def segmed_tarcompress(root_dir, filename, output_dir, csv_reference):
 def dasa_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''
 	Specific compression routine for dasa scans
-	Then compresses folders into tarfiles
+	Rewrites dicom metadata fields and saves in TMP before storing as tgz
 	'''
 
 	ref_data = pd.read_csv(csv_reference).dropna().reset_index()
 	dicom_list = glob.glob(os.path.join(root_dir,filename,'*','*'))
+	os.chdir(root_dir)
 
 	try:
 		#print(dicom_list[1])
@@ -166,15 +173,19 @@ def dasa_tarcompress(root_dir, filename, output_dir, csv_reference):
 		df.PhotometricInterpretation = 'MONOCHROME2'
 
 		# Save series name + frame location 
+		# Dasa uses accession numbers == patient_id not mrn
 		study_uid = str(df.StudyInstanceUID)
 		patient_id = df.PatientID 
 
-		mrn =  ref_data.loc[ref_data['mrn'].astype(str) == patient_id, 'anon_mrn'].values[0]
-		accession = ref_data.loc[ref_data['mrn'].astype(str) == patient_id, 'anon_accession'].values[0]
+		mrn =  ref_data.loc[ref_data['accession'].astype(str) == patient_id, 'anon_mrn'].values[0]
+		accession = ref_data.loc[ref_data['accession'].astype(str) == patient_id, 'anon_accession'].values[0]
 		print(f'{bcolors.BLUE}Processing{bcolors.ENDC}: {mrn}-{accession}')
 		
 
 		for dcm_file in dicom_list:
+			tmp_path = os.path.join(TMP_DIR, os.path.relpath(dcm_file))
+			os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
+
 			df = dcm.dcmread(dcm_file)
 			# Check if any dicoms have non greyscale 
 			df.PhotometricInterpretation = 'MONOCHROME2'
@@ -183,13 +194,15 @@ def dasa_tarcompress(root_dir, filename, output_dir, csv_reference):
 			df.is_little_endian = True
 			df.is_implicit_VR = True
 
-			df.save_as(dcm_file, write_like_original=False)	
+			df.save_as(tmp_path, write_like_original=False)	
 
 		# Dump entire thing as a tarfile with anonymized mrn as basename
-		folder_name = os.path.join(root_dir, filename)
+		folder_name = os.path.join(TMP_DIR, os.path.basename(filename))
 		tar = tarfile.open(os.path.join(output_dir, mrn+'-'+accession+'.tgz'), "w:gz")
 		tar.add(folder_name, arcname=filename)
 		tar.close()
+
+		shutil.rmtree(folder_name)
 
 	except Exception as e:
 		print("DICOM corrupted! Skipping...")
