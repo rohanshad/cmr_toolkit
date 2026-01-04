@@ -101,7 +101,7 @@ def dcm_tarcompress(root_dir, filename, output_dir):
 
 def segmed_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''
-	First reads dcm files and renames the filename to this 
+	Specific compression and anonymization routine for segmed scans
 	Then compresses folders into tarfiles
 	'''
 
@@ -136,6 +136,52 @@ def segmed_tarcompress(root_dir, filename, output_dir, csv_reference):
 			df.AccessionNumber = accession
 			df.is_little_endian = True
 			df.is_implicit_VR = False
+
+			df.save_as(dcm_file, write_like_original=False)	
+
+		# Dump entire thing as a tarfile with anonymized mrn as basename
+		folder_name = os.path.join(root_dir, filename)
+		tar = tarfile.open(os.path.join(output_dir, mrn+'-'+accession+'.tgz'), "w:gz")
+		tar.add(folder_name, arcname=filename)
+		tar.close()
+
+	except Exception as e:
+		print("DICOM corrupted! Skipping...")
+		print(e)
+
+def dasa_tarcompress(root_dir, filename, output_dir, csv_reference):
+	'''
+	Specific compression routine for dasa scans
+	Then compresses folders into tarfiles
+	'''
+
+	ref_data = pd.read_csv(csv_reference).dropna().reset_index()
+	dicom_list = glob.glob(os.path.join(root_dir,filename,'*','*'))
+
+	try:
+		#print(dicom_list[1])
+		df = dcm.dcmread(dicom_list[1])
+
+		# Check if any dicoms have non greyscale 
+		df.PhotometricInterpretation = 'MONOCHROME2'
+
+		# Save series name + frame location 
+		study_uid = str(df.StudyInstanceUID)
+		patient_id = df.PatientID 
+
+		mrn =  ref_data.loc[ref_data['mrn'].astype(str) == patient_id, 'anon_mrn'].values[0]
+		accession = ref_data.loc[ref_data['mrn'].astype(str) == patient_id, 'anon_accession'].values[0]
+		print(f'{bcolors.BLUE}Processing{bcolors.ENDC}: {mrn}-{accession}')
+		
+
+		for dcm_file in dicom_list:
+			df = dcm.dcmread(dcm_file)
+			# Check if any dicoms have non greyscale 
+			df.PhotometricInterpretation = 'MONOCHROME2'
+			df.PatientID = mrn
+			df.AccessionNumber = accession
+			df.is_little_endian = True
+			df.is_implicit_VR = True
 
 			df.save_as(dcm_file, write_like_original=False)	
 
@@ -300,8 +346,7 @@ if __name__ == '__main__':
 			else:
 				dcm_rewrite_originals_tarcompress(root_dir, f, output_dir)
 
-	elif mode == 'penn_tarcompress':
-
+	elif mode == 'penn':
 		for f in filenames:
 			if cpus > 1:
 				p.apply_async(nofolder_tarcompress, [root_dir, f, output_dir, csv_reference])
@@ -315,6 +360,15 @@ if __name__ == '__main__':
 				p.apply_async(segmed_tarcompress, [root_dir, f, output_dir, csv_reference])
 			else:
 				segmed_tarcompress(root_dir, f, output_dir, csv_reference)	
+
+	elif mode == 'dasa':
+
+		for f in filenames:
+			if cpus > 1:
+				p.apply_async(dasa_tarcompress, [root_dir, f, output_dir, csv_reference])
+			else:
+				dasa_tarcompress(root_dir, f, output_dir, csv_reference)	
+
 
 	p.close()
 	p.join()
