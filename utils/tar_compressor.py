@@ -13,6 +13,7 @@ import glob
 import pandas as pd 
 import shutil
 import bcolors
+import zipfile
 
 from pyaml_env import BaseConfig, parse_config
 import platform
@@ -97,7 +98,7 @@ def dcm_tarcompress(root_dir, filename, output_dir):
 		tar.close()
 
 	except:
-	 	print("DICOM corrupted! Skipping...")
+		print("DICOM corrupted! Skipping...")
 
 def segmed_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''
@@ -154,6 +155,101 @@ def segmed_tarcompress(root_dir, filename, output_dir, csv_reference):
 	except Exception as e:
 		print("DICOM corrupted! Skipping...")
 		print(e)
+
+def ukb_unzip_and_organize(root_dir, target_prefix):
+	# Hunt for all scans with specific target eid prefix 
+	DEBUG = False
+	all_scans_for_eid = glob.glob(os.path.join(root_dir, f'{target_prefix}*'))
+
+	for scan in all_scans_for_eid:
+		dat = str.split(os.path.basename(scan), '_')
+		eid = dat[0]
+		datafield = dat[1]
+		instance = dat[2]
+
+		dest_dir = os.path.join(TMP_DIR, eid, instance, datafield)
+		#print(dest_dir)
+		os.makedirs(dest_dir, exist_ok=True)
+
+		try:
+			with zipfile.ZipFile(scan, 'r') as zf:
+				zf.extractall(dest_dir)
+			if DEBUG:
+				print(f"Successfully extracted {scan} to {dest_dir}")
+
+		except zipfile.BadZipFile:
+			print(f"Error: '{zip_file_path}' is not a valid zip file or is corrupted.")
+		except FileNotFoundError:
+			print(f"Error: The file '{zip_file_path}' was not found.")
+		except Exception as e:
+			print(f"An unexpected error occurred: {e}")
+
+
+
+
+
+def ukb_tarcompress(root_dir, filename, output_dir, csv_reference):
+	'''
+	Specific compression and anonymization routine for ukbiobank zip dump
+	Organizes and compresses dicoms into tarfiles
+	'''
+	ukb_unzip_and_organize(root_dir, filename)
+	accession_folders = glob.glob(os.path.join(TMP_DIR, filename, '*'))
+
+	for collected_scans in accession_folders:
+		ref_data = pd.read_csv(csv_reference).dropna().reset_index()
+		dicom_list = glob.glob(os.path.join(collected_scans,'*','*.dcm'))
+		os.chdir(root_dir)
+		
+		try:
+			#print(dicom_list[1])
+			df = dcm.dcmread(dicom_list[1])
+
+			# Check if any dicoms have non greyscale 
+			df.PhotometricInterpretation = 'MONOCHROME2'
+
+			# Save series name + frame location 
+			patient_id = str(filename)
+			scan_instance = str(os.path.basename(collected_scans))
+			mrn =  ref_data.loc[ref_data['f.eid'].astype(str) == patient_id, 'anon_mrn'].values[0]
+			accession = ref_data.loc[(ref_data['f.eid'].astype(str) == patient_id) & (ref_data['instance'].astype(str) == scan_instance), 'anon_accession'].values[0]
+			print(f'{bcolors.BLUE}Processing{bcolors.ENDC}: {mrn}-{accession}')
+			
+
+			for dcm_file in dicom_list:
+				df = dcm.dcmread(dcm_file)
+				series = df.SeriesDescription
+				
+				tmp_path = os.path.join(TMP_DIR, f'{mrn}_{accession}', series, os.path.basename(dcm_file))
+				os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
+				
+				# Check if any dicoms have non greyscale 
+				df.PhotometricInterpretation = 'MONOCHROME2'
+				df.PatientID = mrn
+				df.PatientName = f"redacted_{mrn}"
+				df.AccessionNumber = accession
+				df.is_little_endian = True
+				df.is_implicit_VR = False
+
+				df.save_as(tmp_path, write_like_original=False)	
+
+			# Dump entire thing as a tarfile with anonymized mrn as basename
+			folder_name = os.path.join(TMP_DIR, f'{mrn}_{accession}')
+			tar = tarfile.open(os.path.join(output_dir, mrn+'-'+accession+'.tgz'), "w:gz")
+			tar.add(folder_name, arcname=f'{filename}_{accession}')
+			tar.close()
+
+			shutil.rmtree(folder_name)
+
+		except Exception as e:
+			print("DICOM corrupted! Skipping...")
+			print(e)
+
+
+	try:
+		shutil.rmtree(os.path.join(TMP_DIR,filename))
+	except Exception as e:
+		print(f"Failed to clear tmp for file: {filename}")
 
 def dasa_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''
@@ -250,7 +346,7 @@ def dcm_rewrite_originals_tarcompress(root_dir, filename, output_dir):
 		tar.close()
 
 	except:
-	 	print("DICOM corrupted! Skipping...")
+		print("DICOM corrupted! Skipping...")
 
 
 def simple_tarcompress(root_dir, filename, output_dir):
@@ -301,7 +397,7 @@ if __name__ == '__main__':
 
 	parser = ap.ArgumentParser(
 		description="Tar compress uncompressed data",
-		epilog="Version 0.1; Created by Rohan Shad, MD"
+		epilog="Version 2.0; Created by Rohan Shad, MD"
 	)
 	parser.add_argument('-r', '--root_dir', metavar='', required=False, help='Full path to root directory', default='/scratch/groups/willhies/ukbb_test/bulk_data/raw_data_dump')
 	parser.add_argument('-l', '--csv_ref', metavar='', required=False, help='Anonymize via csv reference sheet', default=None)
@@ -381,6 +477,15 @@ if __name__ == '__main__':
 				p.apply_async(dasa_tarcompress, [root_dir, f, output_dir, csv_reference])
 			else:
 				dasa_tarcompress(root_dir, f, output_dir, csv_reference)	
+
+	elif mode == 'ukbiobank':
+		df = pd.read_csv(csv_reference)
+		filenames = df['f.eid'].unique().astype('str')
+		for f in filenames:
+			if cpus > 1:
+				p.apply_async(ukb_tarcompress, [root_dir, f, output_dir, csv_reference])
+			else:
+				ukb_tarcompress(root_dir, f, output_dir, csv_reference)	
 
 
 	p.close()
