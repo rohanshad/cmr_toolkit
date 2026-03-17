@@ -1,56 +1,161 @@
-# Cardiac MRI Toolkit (alpha)
+# Cardiac MRI Toolkit
 
 [![arXiv](https://img.shields.io/badge/arXiv-2312.00357-b31b1b.svg)](https://arxiv.org/abs/2312.00357)
 
-A set of preprocessing utilities for cardiac MRI studies to make deep learning projects less painful. Supplementary repository for work performed in the paper: [A Generalizable Deep Learning System for Cardiac MRI](https://arxiv.org/abs/2312.00357)
-
+A preprocessing pipeline for cardiac MRI DICOM studies, converting raw acquisition files into structured, ML-ready HDF5 datasets. Supplementary repository for work performed in the paper: [A Generalizable Deep Learning System for Cardiac MRI](https://arxiv.org/abs/2312.00357)
 
 ![summary_usage](https://github.com/rohanshad/cmr_toolkit/blob/5b6055dc059aeccb50bd78d106be4b88eccabe31/media/summary_usage.png)
 
-1. Scripts to convert cardiac-mri dicom files to hdf5 filestores
-2. Methods to standardize metadata (view, frames, slice frame index)
-3. Utilties to plot / tar compress dicoms and extract metadata to double check if everything works
+---
 
-### Basic Workflow
+## Overview
 
-```preprocess_mri.py``` reads in a folder full of dicom studies and converts them to hdf5. Data from each patient (MRN) is stored at a top level folder. Each unique scan (accession #) gets its own .hdf5 file. For each series / view from a 'SeriesDescription' we store the cine sequence as a 4d array ```[c, f, h, w]``` as a hdf5 dataset. To each hdf5 dataset we append attributes (total # of frames and if relevant, the slice index - 'ie. location of the short axis slice')
+`cmr_toolkit` handles the full preprocessing lifecycle for multi-institutional cardiac MRI data — from raw tar.gz DICOM archives through standardized array storage — with built-in data integrity validation and cloud integration. All scripts scale linearly to ~64 CPU cores and can process upwards of 100k MRI scans in under 3 hours.
 
-Scripts are all built to scale almost linearly to about 64 CPU cores for speed. Can process up to 100k MRI scans in less than 3 hours on 64 CPU cores.
+---
 
-```
-upenn_Zx3da3244
-├── Zx3da3581.h5
-├── Gf3lv2173.h5
-	├── 4CH_FIESTA_BH 		{data: 4d array} {attr: fps, total images}
-	├── SAX_FIESTA_BH_1		{data: 4d array} {attr: fps, total images, slice frame index}
-	├── SAX_FIESTA_BH_2		{data: 4d array} {attr: fps, total images, slice frame index}
-	├── STACK_LV3CH_FIESTA_BH	{data: 4d array} {attr: fps, total images, slice frame index}
-	
-```
-
-```build_dataset.py``` builds a copy of the hdf5 filestore above with standardized names for different views. The names are pulled from a separate csv file ```series_descriptions_master.csv```. This contains standard names for a large list of ```SeriesDescription``` tags seen in US based DICOM studies from Phillips, GE, and Siemens scanners. The filestores have the following structure thereafter, where the name of the datasets within the hdf5 files are now standardized series names (4CH, 2CH, 3CH, SAX). 
+## Pipeline Architecture
 
 ```
-upenn_Zx3da3244
-├── Zx3da3581.h5
-├── Gf3lv2173.h5
-		├── 4CH 	{data: 4d array} {attr: fps, total images}
-		├── SAX		{data: 4d array} {attr: fps, total images, slice frame index}
-		├── 3CH		{data: 4d array} {attr: fps, total images}
-```
-
-Chances are SeriesDescription tags from your dataset are not available in the ```series_descriptions_master.csv``` file I have provided. To build your own one specific to your institution, run ```dicom_metadata.py``` to process all your dicoms. You can then add the 'cleaned_series_name' manually thereafter. The 'counts' column is a good way of verifying you're capturing the most commonly occuring studies in your dataset. 
-
-### Notes
-
-There is a local file called ```local_config.yaml``` that I reference in some of the scripts. This is nothing but a simple text file that contains some hardcoded variables such as temporary folders, google / aws bucket names etc. This is just a unique configuration file for each laptop / server as different environments will have their own filesystems. Example below:
+DICOM Archives (tar.gz)
+        ↓
+[preprocess_mri.py]     ← parallel DICOM to HDF5 conversion, multi-institution
+        ↓
+HDF5 Filestore          ← per-patient, per-accession, arrays shaped [frames, H, W] or [frames, channels, H, W] (if RGB)
+        ↓
+[generate_checksums.py] ← SHA256 validation against ground-truth manifest
 
 ```
-tmp_dir: 'tmp/dir/on_some_server'
-bucket_name: unique_googlecloud_bucket
-some_other_variable: 'local/folder/tree'
+
+---
+
+## HDF5 Output Format
+
+After `preprocess_mri.py`, output is organized as `institution_anon_mrn/anon_accession.h5`. Each HDF5 file contains one dataset per MRI series, using the raw DICOM `SeriesDescription` string as the key:
+
+```
+upenn_Zx3da3244/
+└── Gf3lv2173.h5
+    ├── 4CH_FIESTA_BH           [frames, channels, H, W]   attrs: total_images, slice_frames
+    ├── SAX_FIESTA_BH_1         [frames, channels, H, W]   attrs: total_images, slice_frames
+    ├── SAX_FIESTA_BH_2         [frames, channels, H, W]   attrs: total_images, slice_frames
+    └── STACK_LV3CH_FIESTA_BH   [frames, channels, H, W]   attrs: total_images, slice_frames
 ```
 
-### Future Directions
+---
 
-Replace the mastersheet based approach with deep learning view recognition combined with simple heuristics for accurate view, sequence, and phase detection. Initial experiments show promising results. Codebase will be extended to incorporate T1 / T2 / LGE scans in the future. Will also incorporate CI / CD pipelines to keep new commits from breaking reproducibility in pre-processing existing datasets.
+## Core Scripts
+
+### `utils/tar_compress.py`
+DICOM files are delivered in a variety of institutional patterns re: nested folder structures, filenaming conventions, and series folder distributions. This reads DICOM directories and writes compressed .tar.gz files in a standardized format, anonymizing MRN and Accession amongst other PHI if needed. Files are named: anon_mrn-anon_accession.tgz
+
+### `utils/preprocess_mri.py`
+Main entry point. Reads tar.gz DICOM archives, extracts pixel arrays, and writes compressed HDF5 files. Key behaviors:
+- Handles institution-specific DICOM quirks (Stanford, UCSF, MedStar, UK Biobank, UPenn)
+- Sorts frames by `SliceLocation` + `InstanceNumber` for correct temporal ordering
+- Resizes frames via torchvision transforms (default 480px)
+- Supports RGB and greyscale storage modes; greyscale reduces storage ~50–70%
+- Default behaviour to downsample source float16 to uint8
+- Optional direct upload to Google Cloud Storage during processing
+
+```bash
+python utils/preprocess_mri.py \
+  -r /path/to/dicoms \
+  -o /path/to/output \
+  -i stanford \
+  -c 16 \
+  --channels rgb
+```
+
+| Argument | Description |
+|---|---|
+| `-r` / `--root_dir` | DICOM archive directory or GCS bucket (`gs://...`) |
+| `-o` / `--output_dir` | HDF5 output location (required) |
+| `-i` / `--institution` | Institution prefix: `stanford`, `ucsf`, `medstar`, `ukbiobank`, `upenn` |
+| `-c` / `--cpus` | CPU cores for multiprocessing (default: 4) |
+| `-s` / `--framesize` | Resize frames to this pixel size (default: 480) |
+| `-z` / `--compression` | `gzip` or `lzf` (default: gzip) |
+| `--channels` | `rgb` (default) or `grey` |
+| `--gcs_bucket_upload` | Optional GCS bucket for direct upload |
+| `-d` / `--debug` | Report statistics without converting |
+
+### `utils/build_dataset.py`
+Post-processes raw HDF5 output by renaming datasets from raw DICOM `SeriesDescription` strings to standardized view labels (`4CH`, `SAX`, `3CH`, `LAX`) using the lookup table in `series_descriptions_master.csv`. DEPRECATED
+
+### `utils/generate_checksums.py`
+Computes SHA256 checksums over HDF5 pixel data (not file headers) for reproducibility validation. Supports comparison against a reference manifest CSV to detect regressions between runs.
+
+### `utils/dicom_metadata.py`
+Scans DICOM archives to extract metadata (SeriesDescription, SliceLocation, Manufacturer, field strength, MRN, AccessionNumber) and outputs a CSV. 
+
+### `utils/tar_compressor.py`
+Compresses extracted DICOM folders back to tar.gz. Supports anonymization via a CSV crosswalk that remaps `(mrn, accession)` → `(anon_mrn, anon_accession)` during recompression.
+
+### `utils/video_from_h5.py`
+Converts HDF5 cine arrays to MP4 videos via FFmpeg for visual QC. Supports both greyscale and RGB modes.
+
+### `utils/gcputils.py`
+Google Cloud Storage utilities: asynchronous upload queue, GCS bucket mount/unmount via `gcsfuse`, and disk-full throttling (pauses pipeline when temp storage exceeds 90%).
+
+### `utils/ukb_downloader.py`
+Wrapper around the `ukbfetch` CLI for bulk UK Biobank downloads. Chunks large bulk files into 1000-row batches and runs parallel downloads (default: 20 concurrent connections).
+
+### `utils/dicom_deid_mri.py` / `utils/llm_deid.py`
+De-identification pipeline. `llm_deid.py` dispatches local Ollama LLM instances across multiple GPU devices to detect PHI in free-text DICOM fields and clinical reports.
+
+---
+
+## Configuration
+
+### `local_config.yaml`
+Device/cluster-specific settings (paths, CPU counts, GCS bucket name, Slack credentials). This file is machine-specific and not committed. Run `docker_prep.py` to generate a `.env` from it before running the Docker pipeline. Example structure:
+
+```yaml
+global_settings:
+  bucket_name: 'your_gcs_bucket'
+  slack_bot_token: 'xoxb-...'
+
+sherlock:           # per-machine block
+  tmp_dir: '/scratch/tmp'
+  num_cpus: 48
+```
+
+### `series_descriptions_master.csv`
+Lookup table mapping raw `SeriesDescription` DICOM strings → standardized view names (`4CH`, `SAX`, `3CH`, etc.). The `counts` column reflects occurrence frequency and helps verify coverage. If your institution's series descriptions are missing, run `dicom_metadata.py` on your data first and add entries manually. DEPRECATED
+
+---
+
+## Docker Pipeline & Pre-Push Validation
+
+The full preprocessing pipeline runs inside a reproducible Docker environment (Ubuntu 24.04, Python 3.13). `docker-compose.yml` orchestrates sequential preprocessing across all supported institutions in both RGB and greyscale modes, followed by checksum generation and comparison against the ground-truth manifest.
+
+A pre-push git hook enforces this automatically on every `git push`:
+
+```
+git push
+  → docker_prep.py         (regenerate .env from local_config.yaml)
+  → docker compose up      (build image, run full multi-institution pipeline)
+  → generate_checksums.py  (compare output against checksum manifest)
+  → push proceeds only if all checksums match
+```
+
+This blocks any commit that breaks a known-working preprocessing result from reaching the remote.
+
+---
+
+## Supported Institutions
+
+| Institution | Prefix | Notes |
+|---|---|---|
+| Stanford | `stanford` | Standard DICOM metadata |
+| UCSF | `ucsf` | Standard DICOM metadata |
+| MedStar | `medstar` | MRN/accession extracted from filename |
+| UK Biobank | `ukbiobank` | SAX split across multiple folders; EID-based naming |
+| UPenn | `upenn` | MRN/accession extracted from filename |
+
+---
+
+## Machine Learning Integration (`engine/`) - TBD
+
+- **`engine/torch_dataset.py`**: PyTorch `Dataset` class that reads HDF5 files directly, supports train/val/test CSV-driven splits, random or full-frame sampling, and optional transforms.
+- **`engine/labeller.py`**: PyTorch Lightning module for CMR view/modality classification using a Facebook DINO ViT-S/16 backbone. In active development.
