@@ -17,20 +17,11 @@ import tarfile
 from shutil import rmtree
 import pandas as pd
 from collections import Counter
-import platform
-from pyaml_env import BaseConfig, parse_config
-from pathlib import Path
+from local_config import get_cfg
 
-
-# Change these variables for different user / cluster
-device = platform.uname().node.replace('-','_')
-cfg = BaseConfig(parse_config(Path(__file__).parent.resolve().parent.joinpath('local_config.yaml')))
-if 'sh' in device:
-	device = 'sherlock'
-elif '211' in device:
-	device = 'cubic'
-ATTN_DIR = getattr(cfg, device).attn_dir
-TMP_DIR = getattr(cfg, device).tmp_dir
+_cfg     = get_cfg()
+ATTN_DIR = _cfg.attn_dir
+TMP_DIR  = _cfg.tmp_dir
 
 
 class Dicom_Metadata_Scanner:

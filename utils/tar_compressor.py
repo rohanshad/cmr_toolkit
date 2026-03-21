@@ -15,23 +15,11 @@ import shutil
 import bcolors
 import zipfile
 
-from pyaml_env import BaseConfig, parse_config
-import platform
+from local_config import get_cfg, get_global_cfg
 
-
-
-# Read local_config.yaml for local variables 
-device = platform.uname().node.replace('-','_')
-cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
-
-if 'sh' in device:
-	device = 'sherlock'
-elif '211' in device or 'cubic' in device:
-	device = 'cubic'
-elif 'epyc' in device or 'dgx' in device:
-	device = 'parcc'
-TMP_DIR =  getattr(cfg, device).tmp_dir
-BUCKET_NAME =  cfg.global_settings.bucket_name
+_cfg        = get_cfg()
+TMP_DIR     = _cfg.tmp_dir
+BUCKET_NAME = get_global_cfg().bucket_name
 
 def csv_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''

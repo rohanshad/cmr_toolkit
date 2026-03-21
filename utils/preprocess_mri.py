@@ -31,10 +31,9 @@ import matplotlib.pyplot as plt
 import time
 from collections import defaultdict
 from natsort import natsorted, natsort_keygen
-import platform
 import bcolors
 import pylibjpeg
-from pyaml_env import BaseConfig, parse_config
+from local_config import get_cfg, get_global_cfg
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from dotenv import load_dotenv
@@ -44,22 +43,9 @@ from gcputils import wait_if_disk_full, GCP_Upload_Manager, mount_gcs_bucket, un
 # Read and parse local_config.yaml and .env
 load_dotenv()
 
-device = os.getenv("DEVICE_NAME", None)
-if not device:
-	device = platform.uname().node.replace('-','_')
-
-cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
-if 'sh' in device:
-	device = 'sherlock'
-elif 'dgx' in device:
-	device = 'parcc'
-elif 'epyc' in device:
-	device = 'parcc'
-elif '211' in device:
-	device = 'cubic'
-
-TMP_DIR =  getattr(cfg, device).tmp_dir
-BUCKET_NAME =  cfg.global_settings.bucket_name
+_cfg        = get_cfg()
+TMP_DIR     = _cfg.tmp_dir
+BUCKET_NAME = get_global_cfg().bucket_name
 
 
 ### Global Functions ###
@@ -213,12 +199,6 @@ class CMRI_PreProcessor:
 				- UPENN:
 				  dicom data is not-anonymized, mrn and accession is taken from anonymized filenames instead
 				'''
-
-
-				if self.institution_prefix == "ukbiobank":
-					# replace with anonymizing uuid based script
-					accession = mrn.replace(" ", "")
-					mrn = dcm_subfolder.split('/')[-2]
 
 				if self.institution_prefix == "medstar" or self.institution_prefix == "upenn":
 					mrn = self.filename.split('-')[0]

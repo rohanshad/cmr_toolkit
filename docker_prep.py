@@ -1,22 +1,14 @@
 import os
-import platform
-from pyaml_env import BaseConfig, parse_config
+from utils.local_config import get_cfg, get_global_cfg, get_profile_name
 
 def main():
-	device = platform.uname().node.replace('-', '_').lower()
-	if 'sh' in device:
-		device = 'sherlock'
-	elif '211' in device:
-		device = 'cubic'
-	elif 'rohan' in device:
-		device = 'Rohans_MacBook'
-
-	cfg = BaseConfig(parse_config('local_config.yaml'))
-	dcm_path = getattr(cfg, device).dcm_benchmark_data
-	slack_bot_token = getattr(cfg, "global_settings").slack_bot_token
-	slack_bot_channel = getattr(cfg, "global_settings").slack_bot_channel
-	num_cpus = getattr(cfg, device).num_cpus
-	tmp_dir = getattr(cfg, device).tmp_dir
+	_cfg    = get_cfg()
+	_global = get_global_cfg()
+	dcm_path          = _cfg.dcm_benchmark_data
+	slack_bot_token   = _global.slack_bot_token
+	slack_bot_channel = _global.slack_bot_channel
+	num_cpus          = _cfg.num_cpus
+	tmp_dir           = _cfg.tmp_dir
 
 	with open(".env", "w") as f:
 		f.write(f'RAW_DICOM_PATH="{dcm_path}"\n')
@@ -25,7 +17,7 @@ def main():
 		f.write(f'NUM_CPUS="{num_cpus}"\n')
 		f.write(f'TMP_DIR="{tmp_dir}"\n')
 
-	print(f"Generated .env for device: {device}")
+	print(f"Generated .env for device: {get_profile_name()}")
 
 if __name__ == "__main__":
 	main()

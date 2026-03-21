@@ -14,14 +14,11 @@ import glob
 #import imageio
 #import imageio_ffmpeg 
 import subprocess
-import platform
-from pyaml_env import BaseConfig, parse_config
+from local_config import get_cfg, get_global_cfg
 
-# Read local_config.yaml for local variables 
-cfg = BaseConfig(parse_config(os.path.join('..', 'local_config.yaml')))
-device = platform.uname().node.replace('-','_')
-TMP_DIR =  getattr(cfg, device).tmp_dir
-BUCKET_NAME =  cfg.global_settings.bucket_name
+_cfg        = get_cfg()
+TMP_DIR     = _cfg.tmp_dir
+BUCKET_NAME = get_global_cfg().bucket_name
 
 def generate_video_mp4(array, view, root_dir, input_hdf5, output_directory):
 	'''
