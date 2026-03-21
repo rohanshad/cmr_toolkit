@@ -1,8 +1,8 @@
 # Cardiac MRI Toolkit
 
-[![arXiv](https://img.shields.io/badge/arXiv-2312.00357-b31b1b.svg)](https://arxiv.org/abs/2312.00357)
+[![Nature Biomedical Engineering](https://img.shields.io/badge/Nature_Biomedical_Engineering-10.1038%2Fs41551--026--01637--3-016795)](https://www.nature.com/articles/s41551-026-01637-3)
 
-A preprocessing pipeline for cardiac MRI DICOM studies, converting raw acquisition files into structured, ML-ready HDF5 datasets. Supplementary repository for work performed in the paper: [A Generalizable Deep Learning System for Cardiac MRI](https://arxiv.org/abs/2312.00357)
+A preprocessing pipeline for cardiac MRI DICOM studies, converting raw acquisition files into structured, ML-ready HDF5 datasets. Supplementary repository for work performed in the paper: [A Generalizable Deep Learning System for Cardiac MRI](https://www.nature.com/articles/s41551-026-01637-3)
 
 ![summary_usage](https://github.com/rohanshad/cmr_toolkit/blob/5b6055dc059aeccb50bd78d106be4b88eccabe31/media/summary_usage.png)
 
@@ -159,3 +159,18 @@ This blocks any commit that breaks a known-working preprocessing result from rea
 
 - **`engine/torch_dataset.py`**: PyTorch `Dataset` class that reads HDF5 files directly, supports train/val/test CSV-driven splits, random or full-frame sampling, and optional transforms.
 - **`engine/labeller.py`**: PyTorch Lightning module for CMR view/modality classification using a Facebook DINO ViT-S/16 backbone. In active development.
+
+---
+
+## Citation
+If you use this codebase, or otherwise found our work valuable, please cite:
+```
+@article{shad2026generalizabledeeplearningcardiac,
+      title={A Generalizable Deep Learning System for Cardiac MRI},
+      author={Rohan Shad and Cyril Zakka and Dhamanpreet Kaur and Robyn Fong and Ross Warren Filice and John Mongan and Kimberly Kalianos and Nishith Khandwala and David Eng and Matthew Leipzig and Walter Witschey and Alejandro de Feria and Victor Ferrari and Euan Ashley and Michael A. Acker and Curtis Langlotz and William Hiesinger},
+      journal={Nature Biomedical Engineering},
+      year={2026},
+      doi={10.1038/s41551-026-01637-3},
+      url={https://www.nature.com/articles/s41551-026-01637-3},
+}
+```
