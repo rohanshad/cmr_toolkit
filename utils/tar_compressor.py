@@ -1,6 +1,23 @@
 '''
-Dumb tar compressor utilitiy
-This is a workaround because I don't want to make extensive edits to preprocess_video.py
+tar_compressor.py — DICOM folder compression and anonymization utilities.
+
+Reads directories of raw DICOM studies and writes standardized, compressed .tgz archives
+named as anon_mrn-anon_accession.tgz. Supports multiple institution-specific workflows
+via mode selection:
+
+    simple          — compress folder as-is with no renaming
+    dicom           — extract MRN/accession from DICOM tags and rename
+    anonymize       — remap identifiers via CSV crosswalk (mrn, accession → anon_mrn, anon_accession)
+    segmed          — rewrite DICOM tags in-place before compression (SegMed format)
+    ukbiobank       — unzip UKB zip dumps, reorganize by SeriesDescription, rewrite tags
+    dasa            — rewrite tags for DASA institution format
+    penn            — handle flat DICOM folders with no series subdirectory structure
+    reset_dicom_meta — overwrite AccessionNumber in original files before compressing
+
+All modes support multiprocessing via Pool.apply_async().
+
+Usage:
+    python tar_compressor.py -r /path/to/dicoms -o /path/to/output -m anonymize -l crosswalk.csv
 '''
 
 import tarfile
@@ -23,8 +40,17 @@ BUCKET_NAME = get_global_cfg().bucket_name
 
 def csv_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''
-	First reads dcm files and renames the filename to this 
-	Then compresses folders into tarfiles
+	Compress a DICOM folder to .tgz, remapping identifiers via a CSV crosswalk.
+
+	Reads AccessionNumber from a sample DICOM, looks it up in the crosswalk CSV,
+	and uses the mapped anon_mrn and anon_accession as the output filename. Skips
+	silently if the accession is not found in the crosswalk.
+
+	Args:
+		root_dir:      Path to directory containing DICOM study folders.
+		filename:      Name of the study folder to compress.
+		output_dir:    Destination for the output .tgz file.
+		csv_reference: Path to crosswalk CSV with columns: mrn, accession, anon_mrn, anon_accession.
 	'''
 
 	ref_data = pd.read_csv(csv_reference).dropna().reset_index()
@@ -61,8 +87,15 @@ def csv_tarcompress(root_dir, filename, output_dir, csv_reference):
 
 def dcm_tarcompress(root_dir, filename, output_dir):
 	'''
-	First reads dcm files and renames the filename to this 
-	Then compresses folders into tarfiles
+	Compress a DICOM folder to .tgz, named using MRN and AccessionNumber from DICOM tags.
+
+	Reads PatientID and AccessionNumber directly from DICOM metadata to construct the
+	output filename as mrn-accession.tgz. No crosswalk or anonymization is applied.
+
+	Args:
+		root_dir:   Path to directory containing DICOM study folders.
+		filename:   Name of the study folder to compress.
+		output_dir: Destination for the output .tgz file.
 	'''
 
 	dicom_list = glob.glob(os.path.join(root_dir,filename,'*','*'))
@@ -90,8 +123,17 @@ def dcm_tarcompress(root_dir, filename, output_dir):
 
 def segmed_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''
-	Specific compression and anonymization routine for segmed scans
-	Then compresses folders into tarfiles
+	Anonymize and compress SegMed DICOM studies, rewriting tags in-place before archiving.
+
+	Looks up StudyInstanceUID in the crosswalk CSV to retrieve anon_mrn and anon_uid.
+	Rewrites PatientID and AccessionNumber on every DICOM file in TMP_DIR before
+	compressing to .tgz. Cleans up TMP_DIR after compression.
+
+	Args:
+		root_dir:      Path to directory containing DICOM study folders.
+		filename:      Name of the study folder to compress.
+		output_dir:    Destination for the output .tgz file.
+		csv_reference: Path to crosswalk CSV with columns: Study ID, anon_mrn, anon_uid.
 	'''
 
 	ref_data = pd.read_csv(csv_reference).dropna().reset_index()
@@ -178,8 +220,18 @@ def ukb_unzip_and_organize(root_dir, target_prefix):
 
 def ukb_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''
-	Specific compression and anonymization routine for ukbiobank zip dump
-	Organizes and compresses dicoms into tarfiles
+	Anonymize and compress a UK Biobank EID zip dump into per-accession .tgz archives.
+
+	Calls ukb_unzip_and_organize() to extract and reorganize zip files by instance/datafield,
+	then for each collected scan: looks up anon_mrn and anon_accession from the crosswalk,
+	rewrites PatientID, PatientName, and AccessionNumber on every DICOM, reorganizes files
+	into SeriesDescription subdirectories in TMP_DIR, and compresses to .tgz.
+
+	Args:
+		root_dir:      Path to directory containing UKB zip files named {eid}_{datafield}_{instance}_0.zip.
+		filename:      EID string used to glob all zip files for this participant.
+		output_dir:    Destination for output .tgz files.
+		csv_reference: Path to crosswalk CSV with columns: f.eid, instance, anon_mrn, anon_accession.
 	'''
 	ukb_unzip_and_organize(root_dir, filename)
 	accession_folders = glob.glob(os.path.join(TMP_DIR, filename, '*'))
@@ -241,8 +293,17 @@ def ukb_tarcompress(root_dir, filename, output_dir, csv_reference):
 
 def dasa_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''
-	Specific compression routine for dasa scans
-	Rewrites dicom metadata fields and saves in TMP before storing as tgz
+	Anonymize and compress DASA DICOM studies, rewriting tags before archiving.
+
+	DASA uses PatientID as the accession number rather than MRN. Looks up anon_mrn
+	and anon_accession from the crosswalk CSV via PatientID match, rewrites DICOM
+	tags in TMP_DIR, and compresses to .tgz. Cleans up TMP_DIR after compression.
+
+	Args:
+		root_dir:      Path to directory containing DICOM study folders.
+		filename:      Name of the study folder to compress.
+		output_dir:    Destination for the output .tgz file.
+		csv_reference: Path to crosswalk CSV with columns: accession, anon_mrn, anon_accession.
 	'''
 
 	ref_data = pd.read_csv(csv_reference).dropna().reset_index()
@@ -295,8 +356,16 @@ def dasa_tarcompress(root_dir, filename, output_dir, csv_reference):
 
 def dcm_rewrite_originals_tarcompress(root_dir, filename, output_dir):
 	'''
-	First reads dcm files and renames the filename to this 
-	Then compresses folders into tarfiles
+	Overwrite AccessionNumber on original DICOM files in-place, then compress to .tgz.
+
+	Sets AccessionNumber to the literal string 'scandata' on every DICOM file before
+	compressing. Output filename is derived from PatientID and the rewritten AccessionNumber.
+	Modifies the source files directly — use with caution on non-copied data.
+
+	Args:
+		root_dir:   Path to directory containing DICOM study folders.
+		filename:   Name of the study folder to process.
+		output_dir: Destination for the output .tgz file.
 	'''
 
 	dicom_list = glob.glob(os.path.join(root_dir,filename,'*','*'))
@@ -339,7 +408,15 @@ def dcm_rewrite_originals_tarcompress(root_dir, filename, output_dir):
 
 def simple_tarcompress(root_dir, filename, output_dir):
 	'''
-	Compresses folders directly into tarfile without renaming anything
+	Compress a folder to .tgz without any renaming or DICOM tag modification.
+
+	Output filename is the original folder name with .tgz appended. Use for cases
+	where identifiers are already correct and no anonymization is needed.
+
+	Args:
+		root_dir:   Path to directory containing folders to compress.
+		filename:   Name of the folder to compress.
+		output_dir: Destination for the output .tgz file.
 	'''
 	folder_name = os.path.join(root_dir, filename)
 	print('Processing:', filename)
@@ -350,7 +427,19 @@ def simple_tarcompress(root_dir, filename, output_dir):
 
 def nofolder_tarcompress(root_dir, filename, output_dir, csv_reference):
 	'''
-	Deals with dicom folders without any subfolder structure for seriesdescription
+	Handle flat DICOM folders (no series subdirectories) by reorganizing before compression.
+
+	Some institutions (e.g. UPenn) deliver DICOMs in a flat directory with no
+	SeriesDescription subfolders. This function reads SeriesDescription from each
+	DICOM, creates the expected subfolder structure in TMP_DIR, copies files
+	accordingly, then delegates to csv_tarcompress or dcm_tarcompress for final
+	archiving and cleanup.
+
+	Args:
+		root_dir:      Path to directory containing flat DICOM folders.
+		filename:      Name of the flat study folder to process.
+		output_dir:    Destination for the output .tgz file.
+		csv_reference: Path to crosswalk CSV, or None to use dcm_tarcompress (no anonymization).
 	'''
 
 	dicom_list = glob.glob(os.path.join(root_dir, filename, '*'))

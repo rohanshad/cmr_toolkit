@@ -1,5 +1,20 @@
 '''
-Pulls and plots dicom metadata from dcm folders
+dicom_metadata.py — Extract and catalog DICOM metadata from tar.gz archives.
+
+Scans a directory of .tgz DICOM archives and extracts key metadata fields from
+each series: SeriesDescription, SliceLocation, Manufacturer, MagneticFieldStrength,
+PatientID (MRN), and AccessionNumber. Output is written to a CSV file for use in
+building series name mappings and dataset composition analysis.
+
+Supports institution-specific identifier overrides for medstar, segmed, and ukbiobank,
+where standard DICOM tag fields may be blank or formatted differently.
+
+Primary use case: generating the raw series description inventory needed to build
+or extend a series_descriptions mapping for your institution.
+
+Usage:
+    python dicom_metadata.py -r /path/to/dicoms -i stanford -o /path/to/output
+    python dicom_metadata.py -r /path/to/dicoms -i stanford -s True   # with frequency summary
 '''
 
 import torch
@@ -26,7 +41,17 @@ TMP_DIR  = _cfg.tmp_dir
 
 class Dicom_Metadata_Scanner:
 	'''
-	Pulls metadata from original dicom scans stored in tar archives
+	Extract metadata from DICOM series stored in tar.gz archives.
+
+	For each archive, extracts to TMP_DIR, iterates series subfolders,
+	reads metadata from a sample DICOM per subfolder, and returns structured
+	records for downstream CSV export. Cleans up extracted files after processing.
+
+	Args:
+		root_dir:            Path to directory containing .tgz archives.
+		output_dir:          Path where output CSVs will be written.
+		institution_prefix:  Institution identifier used for filename-based
+		                     MRN/accession overrides (e.g. 'medstar', 'ukbiobank').
 	'''
 	def __init__(self, root_dir, output_dir, institution_prefix):
 		self.root_dir = root_dir
@@ -35,7 +60,19 @@ class Dicom_Metadata_Scanner:
 
 	def dcm_reader(self, dcm_subfolder):
 		'''
-		Reads in dicom file and reads the metadata
+		Read metadata from the first DICOM file in a series subfolder.
+
+		Extracts SeriesDescription, SliceLocation, Manufacturer, MagneticFieldStrength,
+		PatientID, and AccessionNumber. Applies institution-specific overrides for
+		medstar and segmed (identifiers parsed from tar filename) and ukbiobank
+		(MRN derived from folder path, accession cleaned from PatientID).
+
+		Args:
+			dcm_subfolder: Path to a single series directory containing .dcm files.
+
+		Returns:
+			Tuple of (series, frame_loc, scanner, field_strength, mrn, accession),
+			or None if the DICOM is corrupted or unreadable.
 		'''
 		dicom_list = os.listdir(dcm_subfolder)
 		
@@ -75,6 +112,22 @@ class Dicom_Metadata_Scanner:
 
 
 	def process_dicoms(self, filename):
+		'''
+		Extract a single .tgz archive and collect metadata from all series subfolders.
+
+		Extracts to TMP_DIR, globs all second-level subdirectories (series folders),
+		calls dcm_reader() on each non-empty folder, and returns a flat list of
+		metadata tuples. Cleans up the extracted directory after processing.
+		Designed to be called via multiprocessing.Pool.apply_async().
+
+		Args:
+			filename: Basename of the .tgz archive within root_dir.
+
+		Returns:
+			List of (series, frame_loc, scanner, field_strength, mrn, accession) tuples,
+			one entry per series subfolder. Entries for corrupted DICOMs are None and
+			filtered out by the caller.
+		'''
 		self.filename = filename
 		tar = tarfile.open(os.path.join(self.root_dir, self.filename))
 		tar_extract_path = os.path.join(TMP_DIR, self.filename[:-4])

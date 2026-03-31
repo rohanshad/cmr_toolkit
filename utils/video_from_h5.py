@@ -1,12 +1,21 @@
 '''
-Exports hdf5 datastores to mp4 and jpg in a neat nested folder structure
-stanford_RF3da2ty4 (MRN parent folder)
-├── RFasfe3581 (Accession subdir)
-├── RFxlv2173
-	├── 4CH_FIESTA_BH.mp4
-	├── SAX_FIESTA_BH_1.mp4
-	├── SAX_FIESTA_BH_2.mp4			
-	├── STACK_LV3CH_FIESTA_BH.mp4
+video_from_h5.py — Export HDF5 cine arrays to MP4 for visual quality control.
+
+Converts every series in an HDF5 filestore to an MP4 video using FFmpeg, organized
+into the same directory structure as the source HDF5 files:
+
+    institution_MRN/
+    └── AccessionNumber/
+        ├── 4CH_FIESTA_BH.mp4
+        ├── SAX_FIESTA_BH_1.mp4
+        └── STACK_LV3CH_FIESTA_BH.mp4
+
+Arrays are globally normalized to [0, 255] uint8 before encoding. Output videos
+use YUV420P pixel format at CRF 14, 24fps. Supports both greyscale (stored as
+[f, h, w] or [f, 1, h, w]) and RGB ([f, c, h, w]) HDF5 layouts.
+
+Usage:
+    python video_from_h5.py -i /path/to/hdf5s -o /path/to/output -c 8 --channels grey
 '''
 import h5py 
 import os
@@ -20,6 +29,22 @@ import numpy as np
 import bcolors
 
 def ffmpeg_writer(hdf5_filepath, series, output_dir, channels):
+	'''
+	Write a single HDF5 series to an MP4 video file using FFmpeg.
+
+	Reads the named dataset from the HDF5 file, validates channel dimensions,
+	transposes to (f, h, w, c) layout, globally normalizes to uint8, and pipes
+	raw frames to an FFmpeg process. Output is written to output_dir/mrn/accession/series.mp4.
+
+	For greyscale arrays, a single-channel frame is repeated to 3 channels before
+	encoding. Handles both 3D (single frame) and 4D (cine) array shapes.
+
+	Args:
+		hdf5_filepath: Full path to the source .h5 file.
+		series:        Dataset key (SeriesDescription string) to export.
+		output_dir:    Root output directory; subdirs are created automatically.
+		channels:      'grey' for greyscale HDF5 layout, 'rgb' for 3-channel layout.
+	'''
 	mrn = os.path.split(os.path.dirname(hdf5_filepath))[1]
 	accession = os.path.basename(hdf5_filepath)[:-3]
 
@@ -73,6 +98,19 @@ def ffmpeg_writer(hdf5_filepath, series, output_dir, channels):
 		process.wait()
 
 def catalog_h5_keys(input_dir):
+	'''
+	Enumerate all HDF5 datasets across an entire filestore directory.
+
+	Walks all .h5 files under input_dir/*/*, opens each file, and records
+	every dataset key alongside its file path. Returns a flat DataFrame
+	suitable for iterating with ffmpeg_writer().
+
+	Args:
+		input_dir: Root directory containing institution_mrn/accession.h5 structure.
+
+	Returns:
+		pd.DataFrame with columns ['filepaths', 'series'].
+	'''
 
 	series = []
 	filepaths = []
