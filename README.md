@@ -108,7 +108,7 @@ De-identification pipeline. `llm_deid.py` dispatches local Ollama LLM instances 
 ## Configuration
 
 ### `local_config.yaml`
-Device/cluster-specific settings (paths, CPU counts, GCS bucket name, Slack credentials). This file is machine-specific and not committed. Run `docker_prep.py` to generate a `.env` from it before running the Docker pipeline. Example structure:
+Device/cluster-specific settings (paths, CPU counts, GCS bucket name, Slack credentials). This file is machine-specific and not committed. Run `tests/docker_prep.py` to generate a `.env` from it before running the Docker pipeline. Example structure:
 
 ```yaml
 global_settings:
@@ -120,26 +120,33 @@ sherlock:           # per-machine block
   num_cpus: 48
 ```
 
-### `series_descriptions_master.csv`
-Lookup table mapping raw `SeriesDescription` DICOM strings → standardized view names (`4CH`, `SAX`, `3CH`, etc.). The `counts` column reflects occurrence frequency and helps verify coverage. If your institution's series descriptions are missing, run `dicom_metadata.py` on your data first and add entries manually. DEPRECATED
-
 ---
 
 ## Docker Pipeline & Pre-Push Validation
 
-The full preprocessing pipeline runs inside a reproducible Docker environment (Ubuntu 24.04, Python 3.13). `docker-compose.yml` orchestrates sequential preprocessing across all supported institutions in both RGB and greyscale modes, followed by checksum generation and comparison against the ground-truth manifest.
+The full preprocessing pipeline runs inside a reproducible Docker environment (Ubuntu 24.04, Python 3.13). `tests/docker-compose.yml` orchestrates sequential preprocessing across all supported institutions in both RGB and greyscale modes, followed by checksum generation and comparison against the ground-truth manifests in `tests/checksums/`.
 
 A pre-push git hook enforces this automatically on every `git push`:
 
 ```
 git push
-  → docker_prep.py         (regenerate .env from local_config.yaml)
-  → docker compose up      (build image, run full multi-institution pipeline)
-  → generate_checksums.py  (compare output against checksum manifest)
+  → hooks/pre-push
+    → tests/run_docker_tests.sh    (workstation-guarded: jarvis_lambda only)
+      → tests/docker_prep.py       (regenerate .env from local_config.yaml)
+      → docker compose up          (build image, run full multi-institution pipeline)
+      → generate_checksums.py      (compare output against tests/checksums/ manifests)
   → push proceeds only if all checksums match
 ```
 
 This blocks any commit that breaks a known-working preprocessing result from reaching the remote.
+
+### Fresh Install
+
+After cloning, run once to install the pre-push hook:
+
+```bash
+bash hooks/install.sh
+```
 
 ---
 
