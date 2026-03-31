@@ -1,4 +1,6 @@
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.local_config import get_cfg, get_global_cfg, get_profile_name
 
 def main():
