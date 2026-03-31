@@ -101,8 +101,8 @@ class Dicom_Metadata_Scanner:
 				accession = self.filename.split('-')[1][:-4]
 
 			elif institution_prefix == "ukbiobank":
-				accession = mrn.replace(" ", "")
-				mrn = dcm_subfolder.split('/')[-2]
+				mrn = self.filename.split('-')[0]
+				accession = self.filename.split('-')[1][:-4]
 
 			return series, frame_loc, scanner, field_strength, mrn, accession
 
