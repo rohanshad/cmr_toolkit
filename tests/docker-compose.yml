@@ -2,16 +2,15 @@ services:
   cmr_toolkit:
     container_name: devtest_cmr_toolkit
     build:
-      context: ..
+      context: .
       dockerfile: tests/Dockerfile
     shm_size: 8G
     deploy:
       resources:
         reservations:
-          cpus: '0.50'
           memory: 64G
     volumes:
-      - ..:/app
+      - .:/app
       - ${RAW_DICOM_PATH}:/app/cmr_toolkit_raw_dicoms
       - ${TMP_DIR}:/app/tmp_dir
 
@@ -33,11 +32,11 @@ services:
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/medstar' -o '/app/tmp_dir/preprocessed_outputs' -c ${NUM_CPUS} -i 'medstar' &&
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/ukbiobank' -o '/app/tmp_dir/preprocessed_outputs' -c ${NUM_CPUS} -i 'ukbiobank' &&
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/upenn' -o '/app/tmp_dir/preprocessed_outputs' -c ${NUM_CPUS} -i 'upenn' &&  
-       python generate_checksums.py -i '/app/tmp_dir/preprocessed_outputs' -o 'generated_checksums.csv' -c ${NUM_CPUS} -f '/app/tests/checksums/dec2_2025_checksum_manifest.csv' &&
+       python generate_checksums.py -i '/app/tmp_dir/preprocessed_outputs' -o 'generated_checksums.csv' -c ${NUM_CPUS} -f '/app/tests/checksums/mar31_2026_checksum_manifest_rgb.csv' &&
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/stanford' -o '/app/tmp_dir/preprocessed_outputs_greyscale' -c ${NUM_CPUS} -i 'stanford' --channels='grey' &&
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/ucsf' -o '/app/tmp_dir/preprocessed_outputs_greyscale' -c ${NUM_CPUS} -i 'ucsf' --channels='grey' &&
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/medstar' -o '/app/tmp_dir/preprocessed_outputs_greyscale' -c ${NUM_CPUS} -i 'medstar' --channels='grey' &&
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/ukbiobank' -o '/app/tmp_dir/preprocessed_outputs_greyscale' -c ${NUM_CPUS} -i 'ukbiobank' --channels='grey' &&
        python preprocess_mri.py -r '/app/cmr_toolkit_raw_dicoms/upenn' -o '/app/tmp_dir/preprocessed_outputs_greyscale' -c ${NUM_CPUS} -i 'upenn' --channels='grey' &&  
-       python generate_checksums.py -i '/app/tmp_dir/preprocessed_outputs_greyscale' -o 'greyscale_generated_checksums.csv' -c ${NUM_CPUS} -f '/app/tests/checksums/dec2_2025_greyscale_checksum_manifest.csv'
+       python generate_checksums.py -i '/app/tmp_dir/preprocessed_outputs_greyscale' -o 'greyscale_generated_checksums.csv' -c ${NUM_CPUS} -f '/app/tests/checksums/mar31_2026_checksum_manifest_grey.csv'
        "
