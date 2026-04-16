@@ -207,6 +207,7 @@ class CMRI_PreProcessor:
 							video_list.append(dcm_data[0])
 							slice_location.append(dcm_data[2])
 							series = dcm_data[1]
+							accession = dcm_data[3]
 							mrn = dcm_data[4]
 							unique_frame_index.append(dcm_data[5])
 							
@@ -589,11 +590,12 @@ if __name__ == '__main__':
 		else:
 			shared_queue = None
 
+		async_results = {}
 		for f in filenames:
 			# Only loops through tgz files
 			if f[-3:] == 'tgz':
 				if cpus > 1:
-					p.apply_async(mri_processor.process_dicoms, [f, shared_queue])
+					async_results[f] = p.apply_async(mri_processor.process_dicoms, [f, shared_queue])
 				else:
 					mri_processor.process_dicoms(f, shared_queue)
 
@@ -602,7 +604,47 @@ if __name__ == '__main__':
 				continue
 
 		p.close()
+
+		# Collect results with per-task timeout so a single hung worker
+		# (e.g. blocked tarfile.extractall or rmtree on a bad mount) cannot stall the pool.
+		TASK_TIMEOUT = 1000  # seconds — adjust if legitimate scans take longer
+		timed_out = []
+		failed = []
+		for f, result in async_results.items():
+			try:
+				result.get(timeout=TASK_TIMEOUT)
+			except multiprocessing.TimeoutError:
+				print(f'WARN: {f} timed out after {TASK_TIMEOUT}s — skipping')
+				timed_out.append(f)
+			except Exception as ex:
+				print(f'WARN: {f} raised an exception — skipping')
+				print(ex)
+				failed.append((f, str(ex)))
+
+		# Workers that timed out are still alive and stuck — terminate the pool
+		# before joining, otherwise p.join() hangs waiting for them to exit.
+		p.terminate()
 		p.join()
+
+		# Clean up tmp dirs left by terminated workers (they never ran rmtree).
+		# Done from main process after workers are dead so any held file locks are released.
+		for f in timed_out:
+			leftover = os.path.join(TMP_DIR, f[:-4])
+			if os.path.exists(leftover):
+				print(f'Cleaning up leftover tmp dir for {f}...')
+				rmtree(leftover, ignore_errors=True)
+
+		# Write stalled/failed runs to a log file for post-hoc review.
+		if timed_out or failed:
+			run_date = time.strftime('%Y-%m-%d')
+			log_path = os.path.join(output_dir, f'{institution_prefix}_{run_date}_stalledruns.log')
+			with open(log_path, 'a') as log:
+				log.write(f'# Run started {time.strftime("%Y-%m-%d %H:%M:%S")} — institution: {institution_prefix}\n')
+				for f in timed_out:
+					log.write(f'TIMEOUT\t{f}\n')
+				for f, reason in failed:
+					log.write(f'EXCEPTION\t{f}\t{reason}\n')
+			print(f'Stalled/failed runs logged to {log_path}')
 
 		if shared_queue:
 			shared_queue.put(None)
@@ -613,11 +655,16 @@ if __name__ == '__main__':
 		except:
 			pass
 
+		elapsed = round((time.time() - start_time), 2)
 		print('------------------------------------')
-		print(f'Elapsed time: {round((time.time() - start_time), 2)}s')
+		print(f'Elapsed time: {elapsed}s')
+		print(f'Timed out:    {len(timed_out)} scan(s)')
+		print(f'Failed:       {len(failed)} scan(s)')
+		if timed_out or failed:
+			print(f'See {institution_prefix}_{time.strftime("%Y-%m-%d")}_stalledruns.log for details')
 		print('------------------------------------')
 
 		# Notification via Slack
-		notify_slack(f"preprocess_mri.py job status: complete. \nTotal time: {round((time.time() - start_time), 2)}s")
+		notify_slack(f"preprocess_mri.py job status: complete. \nTotal time: {elapsed}s\nTimed out: {len(timed_out)} | Failed: {len(failed)}")
 
 

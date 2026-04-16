@@ -4,11 +4,19 @@ services:
     build:
       context: .
       dockerfile: tests/Dockerfile
-    shm_size: 8G
+    shm_size: 64G
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     deploy:
       resources:
+        limits:
+          memory: 220G
+          cpus: '32'
         reservations:
-          memory: 64G
+          memory: 160G
+          cpus: '24'
     volumes:
       - .:/app
       - ${RAW_DICOM_PATH}:/app/cmr_toolkit_raw_dicoms
