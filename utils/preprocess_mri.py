@@ -409,6 +409,17 @@ class CMRI_PreProcessor:
 					print("Trimming to first 10 slices")
 					folders = folders[:10]
 
+				# Guard against OOM: per-folder cap is 2500 but stacked series multiply that.
+				# Trim folders until total frame count fits within 2500.
+				total_frames = sum(len(os.listdir(f)) for f in folders)
+				while total_frames > 2500 and len(folders) > 1:
+					folders = folders[:-1]
+					total_frames = sum(len(os.listdir(f)) for f in folders)
+				if total_frames > 2500:
+					print(f"Stacked series {series} exceeds 2500 frames even as single folder, skipping...")
+					continue
+				print(f"Stacked series {series}: {len(folders)} folders, {total_frames} total frames")
+
 				collated_array = self.collate_arrays(folders, stacked=True)
 				if collated_array is not None:
 					h5_path = self.array_to_h5(*(collated_array))
