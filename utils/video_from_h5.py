@@ -145,7 +145,7 @@ if __name__ == "__main__":
 
 	for index, row in df.iterrows():
 		if args.cpus > 1:
-			p.apply_async(ffmpeg_writer(row['filepaths'], row['series'], args.output_dir, args.channels))
+			p.apply_async(ffmpeg_writer, args=(row['filepaths'], row['series'], args.output_dir, args.channels))
 		else:
 			ffmpeg_writer(row['filepaths'], row['series'], args.output_dir, args.channels)
 
