@@ -60,6 +60,16 @@ BUCKET_NAME = get_global_cfg().bucket_name
 
 ### Global Functions ###
 
+def framesize_arg(value):
+	'''
+	argparse type for --framesize: accepts a positive integer (target pixels)
+	or the literal string 'original' to skip resize/center-crop and preserve the
+	study's native resolution (so spatial metadata such as PixelSpacing stays valid).
+	'''
+	if value == 'original':
+		return 'original'
+	return int(value)
+
 def notify_slack(message: str):
 	'''
 	Send a message to the configured Slack channel via cmr_bot.
@@ -95,7 +105,8 @@ class CMRI_PreProcessor:
 	Args:
 		root_dir:            Path to directory containing .tgz DICOM archives, or GCS bucket path.
 		output_dir:          Path where HDF5 output will be written.
-		framesize:           Target frame size in pixels after resize (default: 480).
+		framesize:           Target frame size in pixels after resize (default: 480),
+		                     or 'original' to skip resize/center-crop and keep native resolution.
 		institution_prefix:  Prefix string for output folders (e.g. 'stanford', 'ucsf').
 		channels:            Storage mode — 'rgb' (3-channel float32) or 'grey' (1-channel uint8).
 		compression:         HDF5 compression algorithm — 'gzip' or 'lzf'.
@@ -174,7 +185,8 @@ class CMRI_PreProcessor:
 			Each DICOM file in a series represents one frame. Frames are sorted first by
 			SliceLocation then by InstanceNumber using natsort to ensure correct temporal
 			and spatial ordering. Slice boundary indices are computed for multi-slice sequences
-			(e.g. SAX stacks). Torchvision v2 transforms are applied for resize and center crop.
+			(e.g. SAX stacks). Torchvision v2 transforms are applied for resize and center crop,
+			unless framesize='original', in which case the native resolution is preserved.
 
 			In stacked mode (e.g. UK Biobank SAX spread across multiple subfolders), dcm_subfolder
 			is a list of folder paths that are iterated and combined before sorting.
@@ -246,8 +258,11 @@ class CMRI_PreProcessor:
 				### Torchvision transformations replacement ###
 				collated_array = torch.Tensor(np.array(video_list))
 				slice_frames = np.where(np.array(slice_location)[:-1] != np.array(slice_location)[1:])[0]
-				transforms = v2.Compose([v2.Resize(size=self.framesize), v2.CenterCrop(round(0.75*self.framesize))])
-				collated_array = transforms(collated_array) # returns as [f, c, h, w]
+				# framesize='original' keeps native resolution so spatial metadata
+				# (e.g. PixelSpacing) stays meaningful; otherwise resize + center crop.
+				if self.framesize != 'original':
+					transforms = v2.Compose([v2.Resize(size=self.framesize), v2.CenterCrop(round(0.75*self.framesize))])
+					collated_array = transforms(collated_array) # returns as [f, c, h, w]
 				#collated_array = collated_array.transpose(1, 0) # returns as [c, f, h, w] for now ##TODO: REMOVE AND SWITCH TO STORING GREYSCALE f, c, h, w	 
 
 				'''
@@ -494,7 +509,8 @@ if __name__ == '__main__':
 	parser.add_argument('-z', '--compression', metavar='', required=False, help='Compression type (gzip pr lzf)', default='gzip')
 	parser.add_argument('-c', '--cpus', metavar='', type=int, default='4',help='number of cores to use in multiprocessing')
 	parser.add_argument('-d', '--debug', action='store_true', default=False)
-	parser.add_argument('-s', '--framesize', metavar='', type=int, default='480', help='framesize in pixels')
+	parser.add_argument('-s', '--framesize', metavar='', type=framesize_arg, default='480',
+		help="framesize in pixels, or 'original' to keep native resolution (skips resize/center-crop)")
 	parser.add_argument('-v', '--visualize', action='store_true', required=False, help='print data from random hdf5 file in output folder')
 	parser.add_argument('-i', '--institution', metavar='', required=True, help='institution name to use as prefix for hdf5 files')
 	parser.add_argument('--gcs_bucket_upload', metavar='', default=None, help='gs:bucket destination for files to be directly uploaded to from local tmp_output directory (-o)')
