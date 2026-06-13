@@ -124,9 +124,15 @@ class Dicom_Metadata_Scanner:
 		Extract a single .tgz archive and collect metadata from all series subfolders.
 
 		Extracts to TMP_DIR, globs all second-level subdirectories (series folders),
-		calls dcm_reader() on each non-empty folder, and returns a flat list of
-		metadata tuples. Cleans up the extracted directory after processing.
-		Designed to be called via multiprocessing.Pool.apply_async().
+		and returns a flat list of metadata records. Cleans up the extracted
+		directory after processing. Designed to be called via
+		multiprocessing.Pool.apply_async().
+
+		If SeriesDescription is among the requested tags, the user wants
+		series-level metadata, so dcm_reader() is called on every non-empty
+		series subfolder (one record per series). Otherwise the requested fields
+		(PatientID, Manufacturer, etc.) are constant across the whole study, so a
+		single sample DICOM from the first non-empty series is read.
 
 		Args:
 			filename: Basename of the .tgz archive within root_dir.
@@ -147,10 +153,18 @@ class Dicom_Metadata_Scanner:
 
 		dcm_directory = glob.glob(os.path.join(tar_extract_path, '*', '*'))
 
+		# SeriesDescription varies per series, so requesting it signals the user
+		# wants series-level metadata (one record per series subfolder). Without
+		# it the requested fields are constant across the study, so a single
+		# sample DICOM suffices and we stop after the first non-empty series.
+		series_level = 'SeriesDescription' in self.fields.values()
+
 		metadata_minilist = []
 		for dcm_subfolder in dcm_directory:
 			if len(glob.glob(os.path.join(glob.escape(dcm_subfolder), '*'))) > 0:
 				metadata_minilist.append(self.dcm_reader(dcm_subfolder))
+				if not series_level:
+					break
 			else:
 				print('Skipped empty dir series')
 
@@ -261,15 +275,19 @@ if __name__ == '__main__':
 
 	# Column names are derived directly from all_fields keys
 	metadata_df = pd.DataFrame(final_list)
-	# Attempt to collapse to one row per MRN if fields are constant within MRN
-	mrn_df = metadata_df.drop_duplicates(subset=['mrn'])
-	if len(mrn_df) < len(metadata_df):
-		print(f'Grouped to {len(mrn_df)} unique MRNs (from {len(metadata_df)} series rows)')
-		print(mrn_df)
-		mrn_df.to_csv(os.path.join(output_dir,f'{institution_prefix}_metadata.csv'), index=False)
-	else:
+	# Series-level intent (SeriesDescription requested) means every series row
+	# is meaningful, so write them all. Otherwise the fields are constant within
+	# MRN, so collapse to one row per MRN.
+	series_level = 'SeriesDescription' in all_fields.values()
+	if series_level:
+		print(f'{len(metadata_df)} series rows across {metadata_df["mrn"].nunique()} unique MRNs')
 		print(metadata_df)
 		metadata_df.to_csv(os.path.join(output_dir,f'{institution_prefix}_metadata.csv'), index=False)
+	else:
+		mrn_df = metadata_df.drop_duplicates(subset=['mrn'])
+		print(f'Grouped to {len(mrn_df)} unique MRNs (from {len(metadata_df)} rows)')
+		print(mrn_df)
+		mrn_df.to_csv(os.path.join(output_dir,f'{institution_prefix}_metadata.csv'), index=False)
 
 	if summarize:
 		if 'series_description' in metadata_df.columns:
