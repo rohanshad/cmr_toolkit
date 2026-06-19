@@ -209,10 +209,9 @@ class CMRI_PreProcessor:
 				unique_frame_index = []
 				# For ukbiobank SAX the 'dcm_subfolder' is a list of 'dcm_subfolders'
 				for folder in dcm_subfolder:
-					dcm_list = os.listdir(folder)
+					dcm_list = natsorted(os.listdir(folder))
 					total_images += len(dcm_list)
 
-					# dcm_list is completely unsorted
 					for d in dcm_list:
 						dcm_data = self.dcm_to_array(os.path.join(folder, d))
 						if dcm_data is not None:
@@ -226,13 +225,12 @@ class CMRI_PreProcessor:
 						else:
 							continue
 			else:
-				dcm_list = os.listdir(dcm_subfolder)
+				dcm_list = natsorted(os.listdir(dcm_subfolder))
 				total_images = len(dcm_list)
 				video_list = []
 				slice_location = []
 				unique_frame_index = []
 
-				# dcm_list is completely unsorted
 				for d in dcm_list:
 					dcm_data = self.dcm_to_array(os.path.join(dcm_subfolder, d))
 
@@ -410,7 +408,8 @@ class CMRI_PreProcessor:
 		for series, folders in series_map.items():
 			# Sort folders by df.SliceLocation if multiple separate folders present
 			if len(folders) > 1:
-				print(f"Processing {series} across {len(folders)} folders ...")	
+				print(f"Processing {series} across {len(folders)} folders ...")
+				folders = natsorted(folders)
 				try:
 					folders.sort(
 						key=lambda x: dcm.dcmread(os.path.join(x, os.listdir(x)[0])).SliceLocation,
