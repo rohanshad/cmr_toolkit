@@ -127,3 +127,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# detect_duplicates.py perceptual dedup scan outputs (fingerprint DB, manifests, logs)
+dedup_scan_outs/
