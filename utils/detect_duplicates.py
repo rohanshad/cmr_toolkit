@@ -8,8 +8,8 @@ non-deterministic series ordering (pre-natsort), non-deterministic frame orderin
 same study hash differently.
 
 This tool instead compares the *imagery*. It ports the findimagedupes perceptual
-fingerprint (160 -> grey -> blur -> normalize -> equalize -> 16x16 -> threshold
-= 256-bit hash, compared by Hamming distance) to pure Python, fingerprints the
+fingerprint (160 -> grey -> blur -> normalize -> equalize -> 32x32 -> threshold
+= 1024-bit hash, compared by Hamming distance) to pure Python, fingerprints the
 first / middle / last frame of every series of every accession (single-frame, non
 -cine series are handled too), then finds pairs/clusters of accession files whose
 imagery is near-identical and writes a CSV manifest of the flagged
@@ -19,8 +19,10 @@ Robust to the frame/series ordering issues above: every series contributes
 several frames and all frames across the whole datastore are matched globally, so
 ordering does not matter.
 
-Threshold uses the real findimagedupes formula: allowed_bits = floor(2.56 * (100
-- pct)). So --threshold 99 allows <=2 of 256 bits to differ (near-identical).
+Threshold uses the findimagedupes formula generalized to the hash width:
+allowed_bits = floor((bits/100) * (100 - pct)). On this 1024-bit hash --threshold
+99 allows <=10 of 1024 bits to differ; the 32x32 grid (vs findimagedupes' 16x16)
+discriminates CMR views far better, cutting false positives at a given percentage.
 
 The full fingerprint manifest is always written to disk so future datasets can be
 checked against it WITHOUT recomputing — scan a new batch and pass the prior
@@ -59,8 +61,11 @@ import bcolors
 # --- Fingerprint constants (chosen for internal consistency, not ImageMagick bit-fidelity) ---
 SAMPLE_SIZE = 160          # findimagedupes: Sample 160x160!
 BLUR_RADIUS = 3            # findimagedupes: Blur radius=3 (sigma large -> ~flat 7px kernel == BoxBlur(3))
-GRID = 16                  # findimagedupes: Sample 16x16  -> 16*16 = 256-bit fingerprint
-FP_BYTES = (GRID * GRID) // 8   # 32 bytes
+GRID = 32                  # findimagedupes uses 16x16 (256-bit); 32x32 = 1024-bit is more discriminative for CMR
+FP_BITS = GRID * GRID           # 1024
+FP_BYTES = FP_BITS // 8         # 128 bytes
+FP_WORDS = FP_BYTES // 8        # 16 uint64 lanes
+BITS_PER_PCT = FP_BITS / 100.0  # findimagedupes' 2.56 generalized to the hash width: allowed_bits = floor(BITS_PER_PCT*(100-pct))
 RESAMPLE = Image.Resampling.BILINEAR
 ALL_POSITIONS = ('first', 'middle', 'last')
 
@@ -68,7 +73,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OUTDIR = os.path.join(SCRIPT_DIR, 'dedup_scan_outs')
 MANIFEST_COLS = ['source', 'relpath', 'mrn', 'accession', 'series', 'frame_pos', 'n_frames', 'fp_hex']
 
-# Vectorized popcount over (P,4) uint64 rows; falls back for numpy < 2.0 (no bitwise_count).
+# Vectorized popcount over (P, FP_WORDS) uint64 rows; falls back for numpy < 2.0 (no bitwise_count).
 if hasattr(np, 'bitwise_count'):
 	def _popcount_rows(xor):
 		return np.bitwise_count(xor).sum(axis=1, dtype=np.int64)
@@ -83,8 +88,8 @@ else:
 # ----------------------------------------------------------------------------- #
 def fingerprint(frame2d):
 	'''
-	Compute the 256-bit findimagedupes-style perceptual fingerprint of a single
-	2D frame. Returns 32 raw bytes, or None for a degenerate (near-constant)
+	Compute the 1024-bit findimagedupes-style perceptual fingerprint of a single
+	2D frame. Returns 128 raw bytes, or None for a degenerate (near-constant)
 	frame that cannot be normalized.
 	'''
 	f = np.asarray(frame2d, dtype=np.float64)
@@ -99,7 +104,7 @@ def fingerprint(frame2d):
 	a = np.asarray(img.resize((GRID, GRID), RESAMPLE), dtype=np.uint8)
 
 	bits = (a > np.median(a)).flatten()          # threshold at median (== IM 50% post-equalize)
-	return np.packbits(bits).tobytes()           # 32 bytes
+	return np.packbits(bits).tobytes()           # FP_BYTES bytes (1024 bits)
 
 
 def _attr_int(dset, key):
@@ -261,13 +266,23 @@ def load_manifest(path, default_label):
 # ----------------------------------------------------------------------------- #
 def load_codes(df):
 	'''
-	Keep only rows with a valid 64-hex fingerprint; return (clean_df, fp_bytes
-	list, codes uint64[N,4]). Drops degenerate/empty fingerprints.
+	Keep only rows with a fingerprint of the current width (FP_BYTES*2 hex chars);
+	return (clean_df, fp_bytes list, codes uint64[N, FP_WORDS]). Empty fp_hex
+	(degenerate frames) are dropped silently; fingerprints of a *different* width
+	(a manifest built with another GRID) raise a clear error rather than vanishing.
 	'''
-	mask = df['fp_hex'].astype(str).str.fullmatch(r'[0-9a-fA-F]{%d}' % (FP_BYTES * 2))
-	clean = df[mask.fillna(False)].reset_index(drop=True)
+	s = df['fp_hex'].astype(str)
+	valid = s.str.fullmatch(r'[0-9a-fA-F]{%d}' % (FP_BYTES * 2)).fillna(False)
+	wrong_width = s.str.fullmatch(r'[0-9a-fA-F]+').fillna(False) & ~valid
+	if wrong_width.any():
+		bad_len = int(s[wrong_width].str.len().iloc[0])
+		raise SystemExit(
+			f'Incompatible fingerprint manifest: {int(wrong_width.sum())} fingerprints have '
+			f'{bad_len} hex chars, but this build uses GRID={GRID} ({FP_BYTES * 2} hex chars). '
+			f'Manifests/DBs built with a different GRID must be regenerated from the source HDF5.')
+	clean = df[valid].reset_index(drop=True)
 	fp_bytes = [bytes.fromhex(h) for h in clean['fp_hex']]
-	codes = np.zeros((len(fp_bytes), 4), dtype=np.uint64)
+	codes = np.zeros((len(fp_bytes), FP_WORDS), dtype=np.uint64)
 	for i, b in enumerate(fp_bytes):
 		codes[i] = np.frombuffer(b, dtype='>u8')
 	return clean, fp_bytes, codes
@@ -275,7 +290,7 @@ def load_codes(df):
 
 def candidate_pairs(fp_bytes, n_bands, max_bucket):
 	'''
-	Multi-index hashing (pigeonhole): split each 256-bit code into n_bands
+	Multi-index hashing (pigeonhole): split each fingerprint into n_bands
 	byte-boundary segments. Two codes within Hamming d agree on >=1 band when
 	n_bands = d + 1, so any near-duplicate pair shares a bucket. Returns the set
 	of candidate (i,j) index pairs (i<j) plus a count of oversized buckets skipped.
@@ -425,11 +440,12 @@ if __name__ == "__main__":
 	                    help='Output directory (default: dedup_scan_outs/ next to this script)')
 	parser.add_argument('-c', '--cpus', type=int, default=12, help='Number of CPUs for fingerprinting')
 	parser.add_argument('--threshold', type=float, default=99.0,
-	                    help='Similarity %% (findimagedupes); allowed_bits = floor(2.56*(100-thr)). 99 -> <=2 bits')
+	                    help='Similarity %% of the 1024-bit hash; allowed_bits = floor((1024/100)*(100-thr)). 99 -> <=10 bits')
 	parser.add_argument('--frames', default='first,middle,last',
 	                    help='Comma list of frames per series to fingerprint (subset of first,middle,last)')
-	parser.add_argument('--min-series', type=int, default=1,
-	                    help='Min matching series for a file pair to be flagged (raise to cut single-view false positives)')
+	parser.add_argument('--min-series', type=int, default=5,
+	                    help='Min matching series to flag a file pair (default 5; CMR studies have ~10-30 series so true '
+	                         'dups share many — lower this for partial-overlap detection)')
 	parser.add_argument('--max-bucket', type=int, default=5000,
 	                    help='Skip+log band buckets larger than this (guards against pathological blowups)')
 	parser.add_argument('--fingerprint-csv', default=None,
@@ -451,12 +467,12 @@ if __name__ == "__main__":
 	if bad or not positions:
 		raise SystemExit(f'--frames must be a non-empty subset of {ALL_POSITIONS}; got {args.frames!r}')
 
-	max_bits = max(0, math.floor(2.56 * (100.0 - args.threshold)))
+	max_bits = max(0, math.floor(BITS_PER_PCT * (100.0 - args.threshold)))
 	n_bands = max(1, min(FP_BYTES, max_bits + 1))     # pigeonhole; 1 band == exact match (max_bits 0)
 
 	print('------------------------------------')
 	print(f'{bcolors.BLUE}Perceptual duplicate detection{bcolors.ENDC}')
-	print(f'threshold={args.threshold}%  -> allowed Hamming bits <= {max_bits} (of 256), bands={n_bands}')
+	print(f'threshold={args.threshold}%  -> allowed Hamming bits <= {max_bits} (of {FP_BITS}), bands={n_bands}')
 	print(f'frames={positions}  min_series={args.min_series}  output={output_dir}')
 	print('------------------------------------')
 
