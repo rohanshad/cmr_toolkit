@@ -1,31 +1,23 @@
 '''
 dicom_metadata.py — Extract and catalog DICOM metadata from tar.gz archives.
 
-Scans a directory of .tgz DICOM archives and extracts key metadata fields:
-SeriesDescription, SliceLocation, Manufacturer, MagneticFieldStrength,
-PatientID (MRN), and AccessionNumber.
-
 Extraction granularity is set with --decompose:
     study   one record per archive, sampled from the first series (default)
     series  one record per series folder
-    frame   every DICOM in every series, as a nested study -> series -> frames tree
+    frame   every DICOM, as a nested study -> series -> frames JSON tree with
+            h5-aligned frame ordering plus slice_frames / total_images per series
 
-study and series write a flat CSV; frame writes nested JSON, which avoids repeating
-the study and series fields on thousands of per-frame rows.
-
-Supports institution-specific identifier overrides for medstar, segmed, and ukbiobank,
-where standard DICOM tag fields may be blank or formatted differently.
+study and series write a flat CSV; frame writes nested JSON. Institution-specific
+mrn/accession overrides are applied for medstar, segmed, and ukbiobank.
 
 Primary use case: generating the raw series description inventory needed to build
 or extend a series_descriptions mapping for your institution.
 
 Usage:
     python dicom_metadata.py -r /path/to/dicoms -i stanford -o /path/to/output
-    python dicom_metadata.py -r /path/to/dicoms -i stanford -d series      # one row per series
     python dicom_metadata.py -r /path/to/dicoms -i stanford -d frame       # nested JSON
-    python dicom_metadata.py -r /path/to/dicoms -i stanford -s             # with frequency summary
-    python dicom_metadata.py -r /path/to/dicoms -i stanford \\
-        -f mrn:PatientID accession:AccessionNumber scanner:Manufacturer    # custom fields
+    python dicom_metadata.py -r /path/to/dicoms -i stanford -s             # frequency summary
+    python dicom_metadata.py -r /path/to/dicoms -i stanford -f scanner:Manufacturer
 '''
 
 import torch
@@ -44,7 +36,7 @@ import tarfile
 from shutil import rmtree
 import pandas as pd
 from collections import Counter
-from natsort import natsorted
+from natsort import natsorted, natsort_keygen
 from local_config import get_cfg
 
 _cfg     = get_cfg()
@@ -81,18 +73,8 @@ FRAME_FIELDS = {
 
 def list_series_files(dcm_subfolder):
 	'''
-	Naturally sorted, hidden-file-free listing of a series folder.
-
-	os.listdir() order is filesystem dependent, so sort for reproducible output —
-	natsorted so IM-2 precedes IM-10, matching frame ordering in preprocess_mri.py.
-	Dotfiles (.DS_Store and friends) are dropped so the first entry is always a DICOM.
-
-	Args:
-		dcm_subfolder: Path to a single series directory.
-
-	Returns:
-		Sorted list of filenames (not full paths). Empty if the path is not a
-		directory or holds nothing but hidden files.
+	Naturally sorted, dotfile-free filename listing of a series folder.
+	natsorted so IM-2 precedes IM-10; [] if the path is not a directory.
 	'''
 	if not os.path.isdir(dcm_subfolder):
 		return []
@@ -103,28 +85,16 @@ class Dicom_Metadata_Scanner:
 	'''
 	Extract metadata from DICOM series stored in tar.gz archives.
 
-	For each archive, extracts to TMP_DIR, iterates series subfolders, and returns
-	structured records for downstream export. Cleans up extracted files afterwards.
-
-	How much is read is controlled by `decompose`:
-		'study'   one flat record per archive, from the first non-empty series
-		'series'  one flat record per non-empty series folder
-		'frame'   one nested dict per archive (study tier, a 'series' list, and a
-		          'frames' list of per-DICOM records inside each series)
-
-	For study and series levels the set of extracted fields is configurable via the
-	`fields` dict, which maps output column names to DICOM tag attribute names and
-	determines the column names in the output DataFrame. Frame level ignores `fields`
-	and uses the module level STUDY_FIELDS / SERIES_FIELDS / FRAME_FIELDS tiers, which
-	are snapshotted onto the instance so they survive pickling into spawned workers.
+	Extracts each archive to TMP_DIR, reads metadata at the granularity set by
+	`decompose`, and cleans up afterwards. Study/series levels use the configurable
+	`fields` dict; frame level uses the module-level STUDY/SERIES/FRAME_FIELDS
+	tiers, snapshotted onto the instance so -f overrides survive spawned workers.
 
 	Args:
 		root_dir:            Path to directory containing .tgz archives.
 		output_dir:          Path where output files will be written.
-		institution_prefix:  Institution identifier used for filename-based
-		                     MRN/accession overrides (e.g. 'medstar', 'ukbiobank').
-		fields:              Dict mapping output column name → DICOM tag attribute name.
-		                     e.g. {'mrn': 'PatientID', 'scanner': 'Manufacturer'}
+		institution_prefix:  Institution id; drives filename-based mrn/accession overrides.
+		fields:              Dict of {column_name: DicomTag}, e.g. {'scanner': 'Manufacturer'}.
 		decompose:           One of 'study', 'series', 'frame'.
 	'''
 	def __init__(self, root_dir, output_dir, institution_prefix, fields, decompose='study'):
@@ -142,25 +112,18 @@ class Dicom_Metadata_Scanner:
 
 	def dcm_reader(self, dcm_path, fields=None):
 		'''
-		Read metadata from a single DICOM file.
+		Read metadata (header only) from a single DICOM file.
 
-		Iterates the requested field dict to extract each DICOM tag. Pixel data is
-		skipped (stop_before_pixels=True) since nothing here needs it. All values are
-		cast to str to handle pydicom types (PersonName, DS, IS, etc.) that do not
-		serialize cleanly as raw objects. Tags absent on a given DICOM are recorded
-		as None. SeriesDescription values are sanitized (spaces and slashes replaced
-		with underscores). Applies institution-specific overrides for medstar, segmed,
-		and ukbiobank on the 'mrn' and 'accession' keys, which are always present
-		via FIXED_FIELDS.
+		Values are str-cast (pydicom types don't serialize cleanly), missing tags
+		record as None, and SeriesDescription is sanitized. medstar/segmed/ukbiobank
+		mrn/accession are overridden from the tar filename.
 
 		Args:
 			dcm_path: Path to a single .dcm file.
-			fields:   Dict of {column_name: DicomTag} to extract. Defaults to
-			          self.fields; frame level passes one tier at a time.
+			fields:   {column_name: DicomTag} to extract; defaults to self.fields.
 
 		Returns:
-			Dict of {column_name: value} for all requested fields,
-			or None if the DICOM is corrupted or unreadable.
+			Dict of extracted values, or None if the DICOM is unreadable.
 		'''
 		fields = self.fields if fields is None else fields
 
@@ -172,10 +135,11 @@ class Dicom_Metadata_Scanner:
 				try:
 					value = getattr(df, tag)
 					# Cast to str to handle pydicom types (PersonName, DS, IS, etc.)
-					# that do not serialize cleanly as raw objects
-					value = str(value)
-					if tag == 'SeriesDescription':
-						value = value.replace(' ', '_').replace('/', '_')
+					# that do not serialize cleanly. Present-but-empty tags return None.
+					if value is not None:
+						value = str(value)
+						if tag == 'SeriesDescription':
+							value = value.replace(' ', '_').replace('/', '_')
 					record[col_name] = value
 				except AttributeError:
 					record[col_name] = None
@@ -194,31 +158,50 @@ class Dicom_Metadata_Scanner:
 			print(ex)
 
 
+	def series_eligible(self, dcm_subfolder, dicom_list):
+		'''
+		Mirror the folder-level skips in preprocess_mri.view_disambugator: oversized
+		folders, unreadable first DICOM / missing SeriesDescription, InlineVF overlays.
+		'''
+		if len(dicom_list) >= 2500:
+			print(f'Insane number of frames detected: {len(dicom_list)}; skipping...')
+			return False
+		try:
+			series = dcm.dcmread(os.path.join(dcm_subfolder, dicom_list[0]), stop_before_pixels=True).SeriesDescription
+		except Exception as e:
+			print(f'Failed to parse DICOM in {dcm_subfolder}: {e}')
+			return False
+		if series is None or 'InlineVF' in series:
+			print('Skipping series (blank description or InlineVF overlay)...')
+			return False
+		return True
+
+
 	def process_dicoms(self, filename):
 		'''
 		Extract a single .tgz archive and collect metadata at the requested level.
 
-		Extracts to TMP_DIR, globs all second-level subdirectories (series folders),
-		and returns a list of records. Cleans up the extracted directory after
-		processing. Designed to be called via multiprocessing.Pool.apply_async().
+		Extracts to TMP_DIR, iterates series subfolders, cleans up afterwards.
+		Designed to be called via multiprocessing.Pool.apply_async().
 
-		At 'study' level the requested fields are constant across the archive, so a
-		single DICOM from the first non-empty series is read and the list holds one
-		flat record. At 'series' level the first DICOM of every non-empty series is
-		read, giving one flat record per series. At 'frame' level every DICOM in
-		every series is read, and the list holds a single nested dict: study tier
-		keys plus a 'series' list, each entry carrying its series tier keys and a
-		'frames' list of per-DICOM records. Source filenames are deliberately not
-		recorded (they can embed SOPInstanceUIDs); frames are ordered by the
-		natsorted file listing and carry their InstanceNumber.
+		'study' reads one DICOM from the first non-empty series; 'series' reads the
+		first DICOM of every series; 'frame' reads every DICOM and returns one nested
+		dict per archive. Series and frames that preprocess_mri would skip (InlineVF,
+		oversized folders, frames missing required tags) are omitted at every level.
+		Frame mode orders each 'frames' list by (SliceLocation, InstanceNumber) to
+		match the h5 arrays from preprocess_mri.collate_arrays, stamps each frame
+		with 'frame_num' (its index in the h5 array), and carries 'slice_frames' /
+		'total_images' per series, mirroring the h5 attrs. Alignment is exact for
+		single-folder series; multi-folder stacks (ukbiobank SAX) are merged and
+		trimmed in the h5 and will not match. Source filenames are omitted (they
+		can embed SOPInstanceUIDs).
 
 		Args:
 			filename: Basename of the .tgz archive within root_dir.
 
 		Returns:
-			List of dicts. Flat records keyed by self.fields for study and series
-			levels, or a single nested dict for frame level. Entries for corrupted
-			DICOMs are None and filtered out by the caller.
+			List of dicts: flat records for study/series, a single nested dict for
+			frame. Corrupted-DICOM entries are None and filtered by the caller.
 		'''
 		self.filename = filename
 		tar = tarfile.open(os.path.join(self.root_dir, self.filename))
@@ -238,11 +221,17 @@ class Dicom_Metadata_Scanner:
 		if self.decompose == 'frame':
 			study_record = None
 			series_list = []
+			# preprocess_mri.dcm_to_array requires these tags on every frame; probe
+			# them alongside the frame tier so its per-frame drops can be mirrored
+			probe_fields = {**self.frame_fields, '_series': 'SeriesDescription',
+				'_accession': 'AccessionNumber', '_mrn': 'PatientID'}
 
 			for dcm_subfolder in dcm_directory:
 				dicom_list = list_series_files(dcm_subfolder)
 				if len(dicom_list) == 0:
 					print('Skipped empty dir series')
+					continue
+				if not self.series_eligible(dcm_subfolder, dicom_list):
 					continue
 
 				first_dcm = os.path.join(dcm_subfolder, dicom_list[0])
@@ -256,13 +245,37 @@ class Dicom_Metadata_Scanner:
 				if series_record is None:
 					continue
 
+				# Frames missing a required tag never reach the h5; drop them here too.
+				# Filenames are not recorded as they may embed SOPInstanceUIDs.
 				frames = []
 				for d in dicom_list:
-					frame_record = self.dcm_reader(os.path.join(dcm_subfolder, d), self.frame_fields)
-					if frame_record is not None:
-						# Don't append filename as this may contain specific SUID fields
-						frames.append({**frame_record})
+					frame_record = self.dcm_reader(os.path.join(dcm_subfolder, d), probe_fields)
+					if frame_record is None:
+						continue
+					probes = [frame_record.pop(k) for k in ('_series', '_accession', '_mrn')]
+					if None in probes or frame_record['slice_location'] is None:
+						continue
+					frames.append(frame_record)
 
+				# A series with no surviving frames never reaches the h5 either
+				if len(frames) == 0:
+					print('No usable frames, skipping series...')
+					continue
+
+				# Mirror preprocess_mri.collate_arrays frame ordering + slice_frames so
+				# frames[i] lines up with h5 frame i; frame_num makes that index explicit
+				tmp_df = pd.DataFrame({
+					'unique_frame_index': [f.get('instance_number') for f in frames],
+					'slice_location':     [float(f['slice_location']) for f in frames],
+				})
+				tmp_df = tmp_df.sort_values(by=['slice_location', 'unique_frame_index'], key=natsort_keygen())
+				frames = [frames[i] for i in tmp_df.index.tolist()]
+				sl = np.array(tmp_df['slice_location'].tolist())
+				slice_frames = np.where(sl[:-1] != sl[1:])[0].tolist()
+				frames = [{'frame_num': i, **f} for i, f in enumerate(frames)]
+
+				series_record['slice_frames'] = slice_frames
+				series_record['total_images'] = len(dicom_list)
 				series_record['frames'] = frames
 				series_list.append(series_record)
 
@@ -274,6 +287,8 @@ class Dicom_Metadata_Scanner:
 				dicom_list = list_series_files(dcm_subfolder)
 				if len(dicom_list) == 0:
 					print('Skipped empty dir series')
+					continue
+				if not self.series_eligible(dcm_subfolder, dicom_list):
 					continue
 
 				metadata_minilist.append(self.dcm_reader(os.path.join(dcm_subfolder, dicom_list[0])))
@@ -320,7 +335,7 @@ if __name__ == '__main__':
 	parser.add_argument('-d', '--decompose', metavar='', choices=['study', 'series', 'frame'], default='study',
 		help='Extraction granularity: one record per study, per series, or per frame (frame writes nested JSON)')
 	parser.add_argument('-f', '--fields', metavar='', nargs='+', default=None,
-		help='Override metadata fields as column_name:DicomTag pairs, e.g. mrn:PatientID scanner:Manufacturer')
+		help='Metadata fields as column_name:DicomTag pairs, e.g. scanner:Manufacturer. Replaces the defaults, except at frame level where pairs are appended')
 
 	args = vars(parser.parse_args())
 	print(args)
@@ -335,7 +350,8 @@ if __name__ == '__main__':
 	os.makedirs(output_dir, exist_ok=True)
 
 	# -f sets the configurable field set (cannot override FIXED_FIELDS). At frame
-	# level it targets the per-frame tier, everywhere else it targets FIELDS.
+	# level it appends to FRAME_FIELDS — the defaults (and computed frame_num) are
+	# protected since the h5 alignment depends on them. Elsewhere it replaces FIELDS.
 	if args['fields'] is not None:
 		override_fields = {}
 		for pair in args['fields']:
@@ -344,7 +360,8 @@ if __name__ == '__main__':
 			if col_name not in FIXED_FIELDS:
 				override_fields[col_name] = tag
 		if decompose == 'frame':
-			FRAME_FIELDS = override_fields
+			protected = set(FRAME_FIELDS) | {'frame_num'}
+			FRAME_FIELDS = {**FRAME_FIELDS, **{k: v for k, v in override_fields.items() if k not in protected}}
 		else:
 			FIELDS = override_fields
 

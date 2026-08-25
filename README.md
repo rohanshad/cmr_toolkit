@@ -86,7 +86,7 @@ Post-processes raw HDF5 output by renaming datasets from raw DICOM `SeriesDescri
 Computes SHA256 checksums over HDF5 pixel data (not file headers) for reproducibility validation. Supports comparison against a reference manifest CSV to detect regressions between runs.
 
 ### `utils/dicom_metadata.py`
-Scans DICOM archives to extract metadata (SeriesDescription, SliceLocation, Manufacturer, field strength, MRN, AccessionNumber). `-d` / `--decompose` sets granularity: `study` (default) and `series` output a flat CSV, `frame` outputs nested JSON (study → series → frames) with per-frame InstanceNumber, SliceLocation, and TriggerTime.
+Scans DICOM archives to extract metadata (SeriesDescription, SliceLocation, Manufacturer, field strength, MRN, AccessionNumber). `-d` / `--decompose` sets granularity: `study` (default) and `series` output a flat CSV, `frame` outputs nested JSON (study → series → frames) with per-frame InstanceNumber, SliceLocation, and TriggerTime. Frame mode orders frames by (SliceLocation, InstanceNumber) to match the h5 arrays from `preprocess_mri.py` — each frame carries `frame_num`, its index in the h5 array — and adds `slice_frames` and `total_images` per series, mirroring the h5 dataset attributes. Series and frames that `preprocess_mri.py` skips are omitted from the output.
 
 ### `utils/tar_compressor.py`
 Compresses extracted DICOM folders back to tar.gz. Supports anonymization via a CSV crosswalk that remaps `(mrn, accession)` → `(anon_mrn, anon_accession)` during recompression.
