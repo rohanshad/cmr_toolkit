@@ -12,7 +12,7 @@ via mode selection:
     ukbiobank       — unzip UKB zip dumps, reorganize by SeriesDescription, rewrite tags
     dasa            — rewrite tags for DASA institution format
     penn            — handle flat DICOM folders with no series subdirectory structure
-    reset_dicom_meta — overwrite AccessionNumber in original files before compressing
+    kaggle          — look up PatientID in crosswalk, rewrite tags in TMP_DIR copies, compress
 
 All modes support multiprocessing via Pool.apply_async().
 
@@ -80,6 +80,78 @@ def csv_tarcompress(root_dir, filename, output_dir, csv_reference):
 		tar = tarfile.open(os.path.join(output_dir, mrn+'-'+accession+'.tgz'), "w:gz")
 		tar.add(folder_name, arcname=filename)
 		tar.close()
+
+	except Exception as e:
+		print("DICOM corrupted! Skipping...")
+		print(e)
+
+def kaggle_tarcompress(root_dir, filename, output_dir, csv_reference):
+	'''
+	Anonymize and compress a Kaggle DICOM study, rewriting tags before archiving.
+
+	Kaggle DICOMs carry the original PatientID and a blank AccessionNumber. Looks up
+	PatientID in the crosswalk CSV to retrieve anon_mrn and anon_accession, rewrites
+	PatientID, PatientName, and AccessionNumber on a copy of every DICOM in TMP_DIR
+	(source files are never modified), and compresses to .tgz. Cleans up TMP_DIR after
+	compression. Downstream preprocess_mri.py reads mrn/accession from the tags, so
+	the tags and the tar filename stay consistent.
+
+	Expected layout: root_dir/{patient}/study/{series}/*.dcm. Each top-level entry of
+	the patient folder (e.g. 'study') is added to the tar under its own name.
+
+	Args:
+		root_dir:      Path to directory containing Kaggle patient folders.
+		filename:      Name of the patient folder to process.
+		output_dir:    Destination for the output .tgz file.
+		csv_reference: Path to crosswalk CSV with columns: mrn, accession, anon_mrn, anon_accession.
+	'''
+
+	ref_data = pd.read_csv(csv_reference).dropna().reset_index()
+	patient_dir = os.path.join(root_dir, filename)
+	dicom_list = glob.glob(os.path.join(patient_dir, '*', '*', '*'))
+
+	if not dicom_list:
+		print(f'{bcolors.ERR}No DICOMs found under {patient_dir}; skipping{bcolors.END}')
+		return
+
+	try:
+		df = dcm.dcmread(dicom_list[0], stop_before_pixels=True)
+		patient_id = str(df.PatientID)
+
+		# Single-row lookup so anon_mrn and anon_accession come from the same row
+		match = ref_data.loc[ref_data['mrn'].astype(int).astype(str) == patient_id]
+		if match.empty:
+			print(f'{bcolors.ERR}No matching scan data in crosswalk for PatientID: {patient_id}{bcolors.END}')
+			return
+		if len(match) > 1:
+			print(f'{bcolors.ERR}Multiple crosswalk rows for PatientID {patient_id}; using first{bcolors.END}')
+		mrn = str(match['anon_mrn'].values[0])
+		accession = str(match['anon_accession'].values[0])
+		print(f'{bcolors.BLUE}Processing{bcolors.ENDC}: {mrn}-{accession}')
+
+		tmp_patient_dir = os.path.join(TMP_DIR, filename)
+		for dcm_file in dicom_list:
+			tmp_path = os.path.join(tmp_patient_dir, os.path.relpath(dcm_file, patient_dir))
+			os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
+
+			df = dcm.dcmread(dcm_file)
+			# Check if any dicoms have non greyscale 
+			df.PhotometricInterpretation = 'MONOCHROME2'
+			df.PatientID = mrn
+			df.PatientName = f"redacted_{mrn}"
+			df.AccessionNumber = accession
+			df.is_little_endian = True
+			df.is_implicit_VR = False
+
+			df.save_as(tmp_path, write_like_original=False)
+
+		# Dump entire thing as a tarfile with anonymized mrn as basename
+		tar = tarfile.open(os.path.join(output_dir, mrn+'-'+accession+'.tgz'), "w:gz")
+		for study in sorted(os.listdir(tmp_patient_dir)):
+			tar.add(os.path.join(tmp_patient_dir, study), arcname=study)
+		tar.close()
+
+		shutil.rmtree(tmp_patient_dir)
 
 	except Exception as e:
 		print("DICOM corrupted! Skipping...")
@@ -354,58 +426,6 @@ def dasa_tarcompress(root_dir, filename, output_dir, csv_reference):
 		print(e)
 
 
-def dcm_rewrite_originals_tarcompress(root_dir, filename, output_dir):
-	'''
-	Overwrite AccessionNumber on original DICOM files in-place, then compress to .tgz.
-
-	Sets AccessionNumber to the literal string 'scandata' on every DICOM file before
-	compressing. Output filename is derived from PatientID and the rewritten AccessionNumber.
-	Modifies the source files directly — use with caution on non-copied data.
-
-	Args:
-		root_dir:   Path to directory containing DICOM study folders.
-		filename:   Name of the study folder to process.
-		output_dir: Destination for the output .tgz file.
-	'''
-
-	dicom_list = glob.glob(os.path.join(root_dir,filename,'*','*'))
-
-	for dcm_file in dicom_list:
-		df = dcm.dcmread(dcm_file)
-		# Check if any dicoms have non greyscale 
-		df.PhotometricInterpretation = 'MONOCHROME2'
-		df.AccessionNumber = 'scandata'	
-
-		df.is_little_endian = True
-		df.is_implicit_VR = True
-
-		df.save_as(dcm_file, write_like_original=False)	
-
-	print(f'Reset AccessionNumbers for {filename}')	
-
-	try:
-		#print(dicom_list[1])
-		df = dcm.dcmread(dicom_list[1])
-
-
-		# Check if any dicoms have non greyscale 
-		df.PhotometricInterpretation = 'MONOCHROME2'
-
-		# Save series name + frame location 
-		accession = df.AccessionNumber  
-		mrn = df.PatientID 
-		print('Processing:', mrn+'-'+accession)
-
-		# Dump entire thing as a tarfile with anonymized mrn as basename
-		folder_name = os.path.join(root_dir, filename)
-		tar = tarfile.open(os.path.join(output_dir, mrn+'-'+accession+'.tgz'), "w:gz")
-		tar.add(folder_name, arcname=filename)
-		tar.close()
-
-	except:
-		print("DICOM corrupted! Skipping...")
-
-
 def simple_tarcompress(root_dir, filename, output_dir):
 	'''
 	Compress a folder to .tgz without any renaming or DICOM tag modification.
@@ -525,13 +545,6 @@ if __name__ == '__main__':
 			else:
 				csv_tarcompress(root_dir, f, output_dir, csv_reference)
 
-	elif mode == 'reset_dicom_meta':
-		for f in filenames:
-			if cpus > 1:
-				p.apply_async(dcm_rewrite_originals_tarcompress, [root_dir, f, output_dir])
-			else:
-				dcm_rewrite_originals_tarcompress(root_dir, f, output_dir)
-
 	elif mode == 'penn':
 		for f in filenames:
 			if cpus > 1:
@@ -564,6 +577,13 @@ if __name__ == '__main__':
 			else:
 				ukb_tarcompress(root_dir, f, output_dir, csv_reference)	
 
+	elif mode == 'kaggle':
+
+		for f in filenames:
+			if cpus > 1:
+				p.apply_async(kaggle_tarcompress, [root_dir, f, output_dir, csv_reference])
+			else:
+				kaggle_tarcompress(root_dir, f, output_dir, csv_reference)
 
 	p.close()
 	p.join()
